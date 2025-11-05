@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>XYZCare Audio Assistant</title>
+  <title>UM Audio Assistant</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
 
 
@@ -171,47 +171,33 @@
   <header>
     <button id="sidebar-toggle" aria-label="Toggle sidebar">☰</button>
     <span class="dot" aria-hidden="true"></span>
-    <h1>XYZCare Audio Assistant</h1>
+    <h1>UM Audio Assistant</h1>
   </header>
 
   <div id="sidebar">
     <section class="panel" aria-label="Voice Controls">
-      <p class="section-title">Controls</p>
+      <!-- <p class="section-title">Controls</p> -->
       <div class="mic-wrap">
         <button id="micBtn" aria-pressed="false" aria-label="Hold to speak or click to start/stop recording">
           🎤
         </button>
-        <span id="micHint">Say product name first (e.g., "LG Refrigerator Manual"), then ask questions (e.g., "Load Driver Circuit"). Press <span class="keyboard-hint">SPACE</span> to activate voice.</span>
+        <span id="micHint">Say a product or a brand name that you wish to purchase and find out relevant offers</span>
       </div>
 
       <div class="status">
         <div class="kv" style="margin-top:10px; flex: 1 1 100%;">
-          <div>Manual</div><div class="value" id="manualVal">—</div>
-          <div>Transcript</div><div class="value" id="transcriptVal">—</div>
+          <!-- <div>Manual</div><div class="value" id="manualVal">—</div> -->
+          <div>Transcript</div><div class="value" id="transcriptVal">:</div>
         </div>
       </div>
 
       <div style="margin-top:12px;">
-        <div class="section-title">Log</div>
+        <!-- <div class="section-title">Log</div> -->
         <pre id="log" aria-live="polite"></pre>
         <div class="toast" id="toast"></div>
       </div>
     </section>
 
-    <!-- Instructions Panel -->
-    <section class="panel" aria-label="Instructions" style="margin-top: 16px;">
-      <p class="section-title">How to Use</p>
-      <ol style="font-size: 13px; line-height: 1.7; color: var(--text); padding-left: 20px; margin: 0;">
-        <li style="margin-bottom: 10px;">
-          <strong>Load a manual:</strong> Say the product name<br>
-          <span style="color: var(--muted); font-size: 12px;">Examples: "Pixel Fold Manual", "LG LFCC Manual", "LG Air Conditioner Manual"</span>
-        </li>
-        <li style="margin-bottom: 0;">
-          <strong>Search within:</strong> Ask your technical question<br>
-          <span style="color: var(--muted); font-size: 12px;">Example: "defrosting circuit"</span>
-        </li>
-      </ol>
-    </section>
   </div>
 
   <div id="main-content">
