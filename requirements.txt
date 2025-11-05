@@ -1,0 +1,31 @@
+# Web framework
+fastapi
+uvicorn[standard]
+pydantic>=2
+python-multipart
+aiofiles
+tenacity
+
+# OpenAI for embeddings and STT
+openai>=1.51.0
+
+# Vector search
+faiss-cpu
+
+# Database
+psycopg2-binary
+SQLAlchemy>=2.0
+python-dotenv
+
+# PDF processing
+PyMuPDF
+
+# Fuzzy string matching
+rapidfuzz
+
+# AWS S3 (for future use)
+boto3
+
+# NumPy for FAISS
+numpy
+gunicorn
