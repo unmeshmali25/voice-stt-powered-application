@@ -1,0 +1,135 @@
+{
+  "users": [
+    {
+      "id": "00000000-0000-0000-0000-000000000001",
+      "email": "demo@example.com",
+      "full_name": "Demo User",
+      "attributes": {
+        "location": "New York",
+        "age_group": "25-34",
+        "purchase_category": "health,beauty"
+      }
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000002",
+      "email": "test@example.com",
+      "full_name": "Test User",
+      "attributes": {
+        "location": "California",
+        "age_group": "35-44",
+        "purchase_category": "vitamins,pharmacy"
+      }
+    }
+  ],
+  "coupons": [
+    {
+      "type": "frontstore",
+      "discount_details": "20% off your entire purchase",
+      "category_or_brand": null,
+      "expiration_date": "2025-12-31T23:59:59",
+      "terms": "Excludes prescriptions, alcohol, and tobacco. Valid in-store and online."
+    },
+    {
+      "type": "frontstore",
+      "discount_details": "$10 off when you spend $50 or more",
+      "category_or_brand": null,
+      "expiration_date": "2025-12-31T23:59:59",
+      "terms": "Minimum purchase required. Excludes prescriptions and gift cards."
+    },
+    {
+      "type": "frontstore",
+      "discount_details": "Buy 2 Get 1 Free on select items",
+      "category_or_brand": null,
+      "expiration_date": "2025-12-31T23:59:59",
+      "terms": "Free item must be of equal or lesser value. Excludes sale items."
+    },
+    {
+      "type": "category",
+      "discount_details": "30% off all beauty products",
+      "category_or_brand": "Beauty",
+      "expiration_date": "2025-12-31T23:59:59",
+      "terms": "Includes makeup, skincare, and hair care products. Excludes prestige brands."
+    },
+    {
+      "type": "category",
+      "discount_details": "25% off vitamins and supplements",
+      "category_or_brand": "Vitamins",
+      "expiration_date": "2025-12-31T23:59:59",
+      "terms": "Valid on all vitamin and supplement products."
+    },
+    {
+      "type": "category",
+      "discount_details": "Buy 1 Get 1 50% off on personal care items",
+      "category_or_brand": "Personal Care",
+      "expiration_date": "2025-12-31T23:59:59",
+      "terms": "Includes shampoo, body wash, deodorant. Second item must be of equal or lesser value."
+    },
+    {
+      "type": "brand",
+      "discount_details": "$5 off Neutrogena skincare products",
+      "category_or_brand": "Neutrogena",
+      "expiration_date": "2025-12-31T23:59:59",
+      "terms": "Valid on Neutrogena skincare items only. Minimum $15 purchase required."
+    },
+    {
+      "type": "brand",
+      "discount_details": "40% off Nature's Bounty vitamins",
+      "category_or_brand": "Nature's Bounty",
+      "expiration_date": "2025-12-31T23:59:59",
+      "terms": "Applies to all Nature's Bounty vitamin products."
+    },
+    {
+      "type": "brand",
+      "discount_details": "Buy 2 Get 1 Free on L'Oreal cosmetics",
+      "category_or_brand": "L'Oreal",
+      "expiration_date": "2025-12-31T23:59:59",
+      "terms": "Free item must be of equal or lesser value. All L'Oreal cosmetic products included."
+    },
+    {
+      "type": "category",
+      "discount_details": "15% off baby care products",
+      "category_or_brand": "Baby Care",
+      "expiration_date": "2025-12-31T23:59:59",
+      "terms": "Includes diapers, wipes, formula, and baby toiletries."
+    },
+    {
+      "type": "category",
+      "discount_details": "$3 off pain relief medications",
+      "category_or_brand": "Pain Relief",
+      "expiration_date": "2025-12-31T23:59:59",
+      "terms": "Valid on Tylenol, Advil, Aleve, and other pain relief products."
+    },
+    {
+      "type": "frontstore",
+      "discount_details": "Free shipping on orders over $35",
+      "category_or_brand": null,
+      "expiration_date": "2025-12-31T23:59:59",
+      "terms": "Online orders only. Excludes prescriptions."
+    },
+    {
+      "type": "category",
+      "discount_details": "20% off cold and flu remedies",
+      "category_or_brand": "Cold & Flu",
+      "expiration_date": "2025-12-31T23:59:59",
+      "terms": "Includes cough syrup, throat lozenges, decongestants, and more."
+    },
+    {
+      "type": "brand",
+      "discount_details": "$2 off Dove body wash and soap",
+      "category_or_brand": "Dove",
+      "expiration_date": "2025-12-31T23:59:59",
+      "terms": "Valid on all Dove body wash and bar soap products."
+    },
+    {
+      "type": "category",
+      "discount_details": "Buy 1 Get 1 Free on oral care products",
+      "category_or_brand": "Oral Care",
+      "expiration_date": "2025-12-31T23:59:59",
+      "terms": "Includes toothpaste, toothbrushes, mouthwash, and dental floss."
+    }
+  ],
+  "user_assignments": {
+    "00000000-0000-0000-0000-000000000001": [0, 1, 2, 3, 4, 5, 6, 7, 8, 11, 12],
+    "00000000-0000-0000-0000-000000000002": [0, 1, 4, 7, 9, 10, 11, 13, 14]
+  }
+}

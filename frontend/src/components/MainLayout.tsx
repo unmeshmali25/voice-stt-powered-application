@@ -3,6 +3,8 @@ import { SidebarProvider, SidebarInset } from './ui/sidebar'
 import { VoiceSidebar } from './VoiceSidebar'
 import { CouponCard } from './CouponCard'
 import { Coupon } from '../types/coupon'
+import { useAuth } from '../hooks/useAuth'
+import { Button } from './ui/button'
 
 // Mock data - will be replaced with real data from backend
 const mockFrontstoreCoupons: Coupon[] = [
@@ -55,6 +57,7 @@ const mockCategoryBrandCoupons: Coupon[] = [
 
 export function MainLayout() {
   const [transcript, setTranscript] = useState<string>('')
+  const { user, signOut } = useAuth()
 
   // This will be replaced with actual search logic when backend is connected
   const handleTranscriptChange = (newTranscript: string) => {
@@ -63,14 +66,30 @@ export function MainLayout() {
     // TODO: Implement PostgreSQL search when backend is ready
   }
 
+  const handleSignOut = async () => {
+    await signOut()
+  }
+
   return (
     <SidebarProvider defaultOpen={true}>
       <div className="flex w-full min-h-screen">
         <VoiceSidebar onTranscriptChange={handleTranscriptChange} />
         <SidebarInset>
-          <header className="sticky top-0 z-10 flex h-16 items-center gap-3 border-b border-border/50 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 px-6">
-            <div className="w-2.5 h-2.5 rounded-full bg-[#CC0000] shadow-[0_0_10px_rgba(204,0,0,0.6)]"></div>
-            <h1 className="text-lg font-semibold tracking-tight">UM Retail Voice Offers</h1>
+          <header className="sticky top-0 z-10 flex h-16 items-center justify-between gap-3 border-b border-border/50 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 px-6">
+            <div className="flex items-center gap-3">
+              <div className="w-2.5 h-2.5 rounded-full bg-[#CC0000] shadow-[0_0_10px_rgba(204,0,0,0.6)]"></div>
+              <h1 className="text-lg font-semibold tracking-tight">UM Retail Voice Offers</h1>
+            </div>
+            <div className="flex items-center gap-4">
+              {user && (
+                <>
+                  <span className="text-sm text-muted-foreground">{user.email}</span>
+                  <Button variant="outline" size="sm" onClick={handleSignOut}>
+                    Sign Out
+                  </Button>
+                </>
+              )}
+            </div>
           </header>
           <main className="flex-1 p-6">
             <div className="max-w-6xl mx-auto">

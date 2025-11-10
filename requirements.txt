@@ -9,6 +9,11 @@ tenacity
 # OpenAI for embeddings and STT
 openai>=1.51.0
 
+# Supabase authentication
+supabase>=2.0.0
+python-jose[cryptography]>=3.3.0
+pyjwt>=2.8.0
+
 # Vector search
 faiss-cpu
 
@@ -16,12 +21,6 @@ faiss-cpu
 psycopg2-binary
 SQLAlchemy>=2.0
 python-dotenv
-
-# PDF processing
-PyMuPDF
-
-# Fuzzy string matching
-rapidfuzz
 
 # AWS S3 (for future use)
 boto3

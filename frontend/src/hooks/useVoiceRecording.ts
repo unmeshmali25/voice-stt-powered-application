@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef } from 'react'
+import { apiFetch } from '@/lib/api'
 
 interface VoiceRecordingState {
   isRecording: boolean
@@ -45,7 +46,7 @@ export function useVoiceRecording(): UseVoiceRecordingReturn {
       const ext = blob.type.includes('wav') ? 'wav' : 'webm'
       formData.append('file', blob, `audio.${ext}`)
 
-      const response = await fetch('/api/stt', {
+      const response = await apiFetch('/api/stt', {
         method: 'POST',
         body: formData,
       })
