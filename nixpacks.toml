@@ -2,7 +2,7 @@
 # This file tells Railway how to build and run the Python backend
 
 [phases.setup]
-nixPkgs = ["python310", "pip"]
+nixPkgs = ["python310"]
 
 [phases.install]
 cmds = [
