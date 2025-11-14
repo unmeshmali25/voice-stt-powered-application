@@ -21,6 +21,7 @@ faiss-cpu
 psycopg2-binary
 SQLAlchemy>=2.0
 python-dotenv
+alembic
 
 # AWS S3 (for future use)
 boto3
@@ -28,3 +29,7 @@ boto3
 # NumPy for FAISS
 numpy
 gunicorn
+
+# Rate limiting and caching
+slowapi
+redis

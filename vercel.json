@@ -1,0 +1,39 @@
+{
+  "version": 2,
+  "name": "voiceoffers",
+  "builds": [
+    {
+      "src": "frontend/package.json",
+      "use": "@vercel/static-build",
+      "config": {
+        "distDir": "frontend/dist"
+      }
+    }
+  ],
+  "routes": [
+    {
+      "src": "/assets/(.*)",
+      "dest": "/assets/$1"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/index.html"
+    }
+  ],
+  "installCommand": "cd frontend && npm install",
+  "buildCommand": "cd frontend && npm run build",
+  "outputDirectory": "frontend/dist",
+  "framework": "vite",
+  "regions": ["iad1"],
+  "env": {
+    "VITE_SUPABASE_URL": "@voiceoffers-supabase-url",
+    "VITE_SUPABASE_ANON_KEY": "@voiceoffers-supabase-anon-key",
+    "VITE_API_URL": "@voiceoffers-api-url"
+  },
+  "git": {
+    "deploymentEnabled": {
+      "main": true,
+      "staging": true
+    }
+  }
+}

@@ -26,6 +26,9 @@ from fastapi import FastAPI, Request, HTTPException, status, UploadFile, File, D
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from starlette.staticfiles import StaticFiles
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from openai import OpenAI
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, Session
@@ -36,9 +39,19 @@ from jwt import PyJWTError
 # --- Env / Config ---
 load_dotenv()
 
+# Environment detection
+ENV = os.getenv("ENV", "development")
+IS_DEV = ENV == "development"
+IS_STAGING = ENV == "staging"
+IS_PROD = ENV == "production"
+
 APP_HOST = os.getenv("APP_HOST", "0.0.0.0")
-APP_PORT = int(os.getenv("APP_PORT", "8000"))
+# Railway provides PORT, fallback to APP_PORT or 8000
+APP_PORT = int(os.getenv("PORT", os.getenv("APP_PORT", "8000")))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+
+# Frontend URL for CORS configuration
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5174")
 
 # Supabase configuration
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -80,6 +93,9 @@ if SUPABASE_URL and SUPABASE_KEY:
 logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper(), logging.INFO))
 logger = logging.getLogger("voiceoffers")
 
+# Rate limiter configuration
+limiter = Limiter(key_func=get_remote_address)
+
 app = FastAPI(
     title="VoiceOffers Coupon Platform",
     version="1.0.0",
@@ -88,13 +104,50 @@ app = FastAPI(
     openapi_url="/openapi.json",
 )
 
-# CORS - permissive for development
+# Add rate limit exceeded handler
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# CORS - environment-based configuration
+def get_cors_origins():
+    """Get CORS origins based on environment."""
+    if IS_DEV:
+        # Development: Allow localhost ports
+        return [
+            "http://localhost:5174",
+            "http://localhost:3000",
+            "http://127.0.0.1:5174",
+            "http://127.0.0.1:3000"
+        ]
+    elif IS_STAGING:
+        # Staging: Allow Vercel preview URLs
+        return [
+            FRONTEND_URL,
+            "https://voiceoffers-staging.vercel.app",
+            "https://*.vercel.app"  # Vercel preview deployments
+        ]
+    elif IS_PROD:
+        # Production: Only allow production domain
+        return [
+            FRONTEND_URL,
+            "https://voiceoffers.vercel.app",
+            "https://voiceoffers.com"  # Add your custom domain if applicable
+        ]
+    else:
+        # Fallback to localhost
+        return ["http://localhost:5174"]
+
+cors_origins = get_cors_origins()
+logger.info(f"Environment: {ENV}")
+logger.info(f"CORS origins: {cors_origins}")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origins=cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["*"]
 )
 
 
@@ -325,6 +378,7 @@ async def auth_me(
 # --- Speech-to-Text Endpoint ---
 
 @app.post("/api/stt")
+@limiter.limit("10/minute")  # Rate limit: 10 requests per minute per IP
 async def stt(
     request: Request,
     file: UploadFile = File(...),
@@ -408,7 +462,14 @@ async def stt(
     # Call OpenAI Whisper API
     try:
         logger.info(f"Initializing OpenAI client for user {user_id}")
-        client = OpenAI(api_key=api_key)
+        # Add environment tracking header for OpenAI usage monitoring
+        client = OpenAI(
+            api_key=api_key,
+            default_headers={
+                "X-Environment": ENV,
+                "X-User-Agent": f"VoiceOffers/{app.version}/{ENV}"
+            }
+        )
 
         import io
         audio_file = io.BytesIO(audio_bytes)
@@ -489,6 +550,7 @@ async def stt(
 # --- Coupon Search Endpoint ---
 
 @app.post("/api/coupons/search")
+@limiter.limit("30/minute")  # Rate limit: 30 searches per minute per IP
 async def coupon_search(
     request: Request,
     user: Dict[str, Any] = Depends(verify_token),
@@ -619,7 +681,14 @@ async def coupon_search(
         ]
 
         try:
-            client = OpenAI(api_key=api_key)
+            # Add environment tracking header for OpenAI usage monitoring
+            client = OpenAI(
+                api_key=api_key,
+                default_headers={
+                    "X-Environment": ENV,
+                    "X-User-Agent": f"VoiceOffers/{app.version}/{ENV}"
+                }
+            )
             resp = client.embeddings.create(model=emb_model, input=texts)
             vecs = [np.array(item.embedding, dtype=np.float32) for item in resp.data]
         except Exception as e:

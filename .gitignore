@@ -5,9 +5,7 @@
 # =============================================================================
 .env
 .env.*
-!.env.example
-!.env*.template
-# All env files except templates and examples
+# All env files including templates and examples (keep them local only)
 
 # =============================================================================
 # PYTHON
