@@ -4,10 +4,10 @@
 # ENVIRONMENT & SECRETS
 # =============================================================================
 .env
-.env.local
-.env.*.local
-*.env
-.env.example
+.env.*
+!.env.example
+!.env*.template
+# All env files except templates and examples
 
 # =============================================================================
 # PYTHON
@@ -267,3 +267,37 @@ CLAUDE.md
 
 # AWS setup documentation (contains sensitive workflow info)
 aws_setup.md
+
+# =============================================================================
+# DOCUMENTATION & DEPLOYMENT CONFIGS (not needed in deployments)
+# =============================================================================
+# Markdown documentation files
+*.md
+!README.md
+# Keep README.md but ignore all other markdown files
+
+# Deployment configuration files (Railway/Vercel read from repo, don't need in builds)
+alembic.ini
+alembic/
+check_env.py
+heroku_release.sh
+start_server.sh
+docker-compose.yml
+Procfile
+app.json
+
+# Test files
+test.db
+test_audio.webm
+
+# Build artifacts
+*.tsbuildinfo
+frontend/dist/
+
+# GitHub workflows (not needed in deployments)
+.github/
+.human/
+
+# Platform-specific ignore files
+.railwayignore
+.vercelignore
