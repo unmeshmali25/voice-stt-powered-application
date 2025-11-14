@@ -1,23 +1,8 @@
 # Nixpacks configuration for Railway deployment
-# This file tells Railway how to build and run the Python backend
+# Let nixpacks auto-detect and install requirements.txt
 
 [phases.setup]
 nixPkgs = ["python310"]
 
-[phases.install]
-cmds = [
-  "pip install --upgrade pip",
-  "pip install -r requirements.txt"
-]
-
-[phases.build]
-cmds = ["echo 'Backend build complete'"]
-
 [start]
 cmd = "gunicorn app.main:app --workers 2 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT --timeout 120 --log-level info"
-
-[variables]
-# These will be overridden by Railway environment variables
-ENV = "production"
-APP_HOST = "0.0.0.0"
-LOG_LEVEL = "INFO"
