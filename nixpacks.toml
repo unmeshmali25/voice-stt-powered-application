@@ -1,5 +1,7 @@
 # Nixpacks configuration for Railway deployment
-# Let nixpacks auto-detect and install requirements.txt
+# Explicitly use Python provider to avoid Node.js detection
+
+providers = ["python"]
 
 [phases.setup]
 nixPkgs = ["python310"]
