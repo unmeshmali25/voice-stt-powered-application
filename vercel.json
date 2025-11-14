@@ -25,11 +25,6 @@
   "outputDirectory": "frontend/dist",
   "framework": "vite",
   "regions": ["iad1"],
-  "env": {
-    "VITE_SUPABASE_URL": "@voiceoffers-supabase-url",
-    "VITE_SUPABASE_ANON_KEY": "@voiceoffers-supabase-anon-key",
-    "VITE_API_URL": "@voiceoffers-api-url"
-  },
   "git": {
     "deploymentEnabled": {
       "main": true,
