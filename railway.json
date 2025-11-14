@@ -9,7 +9,7 @@
     "restartPolicyMaxRetries": 10
   },
   "healthcheck": {
-    "path": "/healthz",
-    "timeout": 100
+    "path": "/health",
+    "timeout": 5000
   }
 }

@@ -263,10 +263,19 @@ async def root():
     return HTMLResponse(content=html, status_code=200)
 
 
+@app.get("/health")
+async def health():
+    """
+    Simple health check endpoint for Railway deployment.
+    Returns 200 OK if the application is running.
+    """
+    return {"status": "ok"}
+
+
 @app.get("/healthz", response_class=JSONResponse)
 async def healthz(db: Session = Depends(get_db)) -> JSONResponse:
     """
-    Health check endpoint with database connectivity test.
+    Detailed health check endpoint with database connectivity test.
     """
     checks: Dict[str, Any] = {
         "frontend_index_exists": FRONTEND_INDEX.exists(),
