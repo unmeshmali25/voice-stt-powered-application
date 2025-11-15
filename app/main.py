@@ -144,12 +144,15 @@ logger.info(f"CORS origins: {cors_origins}")
 # Add regex pattern for Vercel preview deployments
 cors_regex = None
 if IS_STAGING or IS_PROD:
-    cors_regex = r'https://(voice-stt-powered-application-.*|voiceoffers.*)\.vercel\.app'
+    # Allow both preview deployments (voice-stt-powered-application-<id>.vercel.app)
+    # and the root domain (voice-stt-powered-application.vercel.app), plus voiceoffers.* on vercel
+    cors_regex = r'https://(voice-stt-powered-application(-[a-z0-9]+)?|voiceoffers.*)\.vercel\.app'
     logger.info(f"CORS regex pattern: {cors_regex}")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=cors_origins if IS_DEV else [],
+    # Always honor explicit allowlist based on environment
+    allow_origins=cors_origins,
     allow_origin_regex=cors_regex,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
