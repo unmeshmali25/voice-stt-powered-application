@@ -141,9 +141,16 @@ cors_origins = get_cors_origins()
 logger.info(f"Environment: {ENV}")
 logger.info(f"CORS origins: {cors_origins}")
 
+# Add regex pattern for Vercel preview deployments
+cors_regex = None
+if IS_STAGING or IS_PROD:
+    cors_regex = r'https://(voice-stt-powered-application-.*|voiceoffers.*)\.vercel\.app'
+    logger.info(f"CORS regex pattern: {cors_regex}")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=cors_origins,
+    allow_origins=cors_origins if IS_DEV else [],
+    allow_origin_regex=cors_regex,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
