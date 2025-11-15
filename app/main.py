@@ -9,7 +9,6 @@ Serves:
 - GET /api/auth/me : Get current user profile
 - POST /api/coupons/search : Semantic coupon search (authenticated)
 """
-from __future__ import annotations
 
 import os
 import logging
