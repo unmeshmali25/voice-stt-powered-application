@@ -11,7 +11,7 @@ export function ProductCard({ product }: ProductCardProps) {
   return (
     <Card className="shadow-[0_4px_12px_rgba(0,0,0,0.5)] hover:shadow-[0_12px_32px_rgba(204,0,0,0.4)] hover:-translate-y-1 transition-all duration-300 border-border/50 backdrop-blur-sm">
       <CardHeader className="p-0">
-        <div className="relative w-full h-48 overflow-hidden rounded-t-lg bg-gray-100">
+        <div className="relative w-full h-36 overflow-hidden rounded-t-lg bg-gray-100">
           <img 
             src={product.imageUrl} 
             alt={product.name}
@@ -24,10 +24,10 @@ export function ProductCard({ product }: ProductCardProps) {
           />
         </div>
       </CardHeader>
-      <CardContent className="p-4">
+      <CardContent className="p-3">
         <div className="space-y-2">
           {/* Product Name */}
-          <h3 className="text-base font-semibold line-clamp-2 min-h-[2.5rem]">
+          <h3 className="text-sm font-semibold line-clamp-2 min-h-[2.5rem]">
             {product.name}
           </h3>
           
@@ -38,7 +38,7 @@ export function ProductCard({ product }: ProductCardProps) {
                 {[...Array(5)].map((_, i) => (
                   <Star
                     key={i}
-                    className={`w-4 h-4 ${
+                    className={`w-3.5 h-3.5 ${
                       i < Math.floor(product.rating!)
                         ? 'fill-orange-500 text-orange-500'
                         : 'fill-none text-gray-300'
@@ -47,7 +47,7 @@ export function ProductCard({ product }: ProductCardProps) {
                 ))}
               </div>
               {product.reviewCount && (
-                <span className="text-xs text-muted-foreground">
+                <span className="text-[10px] text-muted-foreground">
                   {product.reviewCount}
                 </span>
               )}
@@ -55,7 +55,7 @@ export function ProductCard({ product }: ProductCardProps) {
           )}
           
           {/* Price */}
-          <div className="text-2xl font-bold">
+          <div className="text-xl font-bold">
             ${product.price.toFixed(2)}
           </div>
           
@@ -69,7 +69,7 @@ export function ProductCard({ product }: ProductCardProps) {
           {/* Add Button */}
           <Button 
             className="w-full bg-[#0033A0] hover:bg-[#002080] text-white rounded-full"
-            size="lg"
+            size="default"
           >
             <ShoppingCart className="w-5 h-5 mr-2" />
             Add

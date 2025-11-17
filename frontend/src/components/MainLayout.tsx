@@ -142,7 +142,14 @@ export function MainLayout() {
           <main className="flex-1 p-6">
             <div className="max-w-7xl mx-auto">
               {/* Three-column grid */}
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 px-4 sm:px-6 lg:px-8">
+              <div className="grid grid-cols-1 gap-6 px-4 sm:px-6 lg:px-8 lg:gap-8" style={{ gridTemplateColumns: 'repeat(1, minmax(0, 1fr))' }} data-lg-grid="true">
+                <style>{`
+                  @media (min-width: 1024px) {
+                    [data-lg-grid="true"] {
+                      grid-template-columns: 1.15fr 1fr 1fr !important;
+                    }
+                  }
+                `}</style>
                 
                 {/* LEFT COLUMN: Products */}
                 <div className="space-y-4">
