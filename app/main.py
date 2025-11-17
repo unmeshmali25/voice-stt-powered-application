@@ -119,11 +119,11 @@ def get_cors_origins():
             "http://127.0.0.1:3000"
         ]
     elif IS_STAGING:
-        # Staging: Allow Vercel preview URLs
+        # Staging: Allow Vercel preview URLs. Add base domain just in case.
         return [
             FRONTEND_URL,
+            "https://voice-stt-powered-application-staging.vercel.app",
             "https://voiceoffers-staging.vercel.app",
-            "https://*.vercel.app"  # Vercel preview deployments
         ]
     elif IS_PROD:
         # Production: Only allow production domain
@@ -145,7 +145,8 @@ cors_regex = None
 if IS_STAGING or IS_PROD:
     # Allow both preview deployments (voice-stt-powered-application-<id>.vercel.app)
     # and the root domain (voice-stt-powered-application.vercel.app), plus voiceoffers.* on vercel
-    cors_regex = r'https://(voice-stt-powered-application(-[a-z0-9]+)?|voiceoffers.*)\.vercel\.app'
+    # It also handles staging URLs by making '-staging' optional.
+    cors_regex = r'https://(voice-stt-powered-application(-staging)?(-[a-z0-9]+)?|voiceoffers.*)\.vercel\.app'
     logger.info(f"CORS regex pattern: {cors_regex}")
 
 app.add_middleware(
