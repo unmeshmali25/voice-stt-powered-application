@@ -152,11 +152,6 @@ export function VoiceSidebar({ onTranscriptChange }: VoiceSidebarProps) {
       </SidebarContent>
 
       <SidebarFooter className="border-t border-sidebar-border">
-        <div className="px-4 py-3">
-          <p className="text-xs text-muted-foreground text-center">
-            UM Retail Voice Offers
-          </p>
-        </div>
       </SidebarFooter>
     </Sidebar>
   )

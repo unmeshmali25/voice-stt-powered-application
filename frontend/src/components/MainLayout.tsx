@@ -75,11 +75,7 @@ export function MainLayout() {
       <div className="flex w-full min-h-screen">
         <VoiceSidebar onTranscriptChange={handleTranscriptChange} />
         <SidebarInset>
-          <header className="sticky top-0 z-10 flex h-16 items-center justify-between gap-3 border-b border-border/50 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 px-6">
-            <div className="flex items-center gap-3">
-              <div className="w-2.5 h-2.5 rounded-full bg-[#CC0000] shadow-[0_0_10px_rgba(204,0,0,0.6)]"></div>
-              <h1 className="text-lg font-semibold tracking-tight">UM Retail Voice Offers</h1>
-            </div>
+          <header className="sticky top-0 z-10 flex h-16 items-center justify-end gap-3 border-b border-border/50 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 px-6">
             <div className="flex items-center gap-4">
               {user && (
                 <>
