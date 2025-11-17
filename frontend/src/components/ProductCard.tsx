@@ -9,7 +9,7 @@ interface ProductCardProps {
 
 export function ProductCard({ product }: ProductCardProps) {
   return (
-    <Card className="shadow-[0_4px_12px_rgba(0,0,0,0.5)] hover:shadow-[0_12px_32px_rgba(204,0,0,0.4)] hover:scale-110 hover:z-20 transition-all duration-300 border-border/50 backdrop-blur-sm">
+    <Card className="shadow-[0_4px_12px_rgba(0,0,0,0.5)] hover:shadow-[0_12px_32px_rgba(255,215,0,0.4)] hover:scale-110 hover:z-30 hover:border-amber-400/60 transition-all duration-300 border-border/50 backdrop-blur-sm">
       <CardHeader className="p-0">
         <div className="relative w-full h-20 overflow-hidden rounded-t-lg bg-gray-100">
           <img

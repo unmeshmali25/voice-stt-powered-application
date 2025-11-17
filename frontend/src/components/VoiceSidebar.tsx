@@ -135,9 +135,9 @@ export function VoiceSidebar({ onTranscriptChange }: VoiceSidebarProps) {
             <SidebarGroupLabel>Status</SidebarGroupLabel>
             <SidebarGroupContent className="px-2">
               {transcript && (
-                <div className="p-3 bg-[#CC0000]/5 border border-[#CC0000]/30 rounded-md mb-2">
-                  <p className="text-xs font-medium text-[#CC0000] mb-1">Transcript:</p>
-                  <p className="text-sm text-gray-800">{transcript}</p>
+                <div className="p-3 bg-green-500/10 border border-green-500/40 rounded-md mb-2">
+                  <p className="text-xs font-medium text-green-600 mb-1">Transcript:</p>
+                  <p className="text-sm text-green-800">{transcript}</p>
                 </div>
               )}
 

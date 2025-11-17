@@ -3,6 +3,7 @@ import { SidebarProvider, SidebarInset } from './ui/sidebar'
 import { VoiceSidebar } from './VoiceSidebar'
 import { CouponCard } from './CouponCard'
 import { ProductCard } from './ProductCard'
+import { ChristmasDecorations } from './ChristmasDecorations'
 import { Coupon } from '../types/coupon'
 import { Product } from '../types/product'
 import { useAuth } from '../hooks/useAuth'
@@ -106,6 +107,7 @@ const mockProducts: Product[] = [
 export function MainLayout() {
   const [transcript, setTranscript] = useState<string>('')
   const [products] = useState<Product[]>(mockProducts)
+  const [hoveredProductId, setHoveredProductId] = useState<string | null>(null)
   const { user, signOut } = useAuth()
 
   // This will be replaced with actual search logic when backend is connected
@@ -121,12 +123,15 @@ export function MainLayout() {
 
   return (
     <SidebarProvider defaultOpen={true}>
-      <div className="flex w-full min-h-screen">
+      <div className="flex w-full min-h-screen relative">
+        <ChristmasDecorations />
         <VoiceSidebar onTranscriptChange={handleTranscriptChange} />
         <SidebarInset>
           <header className="sticky top-0 z-10 flex h-16 items-center justify-between gap-3 border-b border-border/50 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 px-6">
-            <h1 className="text-xl font-bold">
-              {transcript ? 'Recommended for you' : 'VoiceOffers'}
+            <h1 className="text-xl font-bold flex items-center gap-2">
+              <span className="festive-glow">❄️</span>
+              {transcript ? 'Recommended for you' : 'AI Powered Retail App'}
+              <span className="festive-glow">🎄</span>
             </h1>
             <div className="flex items-center gap-4">
               {user && (
@@ -161,23 +166,35 @@ export function MainLayout() {
                       {transcript ? `Products matching "${transcript}"` : 'Popular products'}
                     </p>
                   </div>
-                  <div className="relative flex flex-col">
-                    {products.map((product, index) => (
-                      <div
-                        key={product.id}
-                        className="relative"
-                        style={{ marginTop: index === 0 ? '0' : '-4rem' }}
-                      >
-                        <ProductCard product={product} />
-                      </div>
-                    ))}
+                  <div className="relative flex flex-col items-start">
+                    <div className="w-[72%] relative flex flex-col">
+                      {products.map((product, index) => (
+                        <div
+                          key={product.id}
+                          className={`relative transition-all duration-300 ${
+                            hoveredProductId && hoveredProductId !== product.id
+                              ? 'opacity-60'
+                              : 'opacity-100'
+                          }`}
+                          style={{
+                            marginTop: index === 0 ? '0' : '-4rem',
+                            zIndex: hoveredProductId === product.id ? 50 : 10
+                          }}
+                          onMouseEnter={() => setHoveredProductId(product.id)}
+                          onMouseLeave={() => setHoveredProductId(null)}
+                        >
+                          <ProductCard product={product} />
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
 
                 {/* MIDDLE COLUMN: Front-store Offers */}
                 <div className="space-y-4">
                   <div className="mb-6">
-                    <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-1">
+                    <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-1 flex items-center gap-2">
+                      <span className="text-red-500">🎁</span>
                       Front-store Offers
                     </h2>
                     <p className="text-xs text-muted-foreground">
@@ -194,7 +211,8 @@ export function MainLayout() {
                 {/* RIGHT COLUMN: Category & Brand Offers */}
                 <div className="space-y-4">
                   <div className="mb-6">
-                    <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-1">
+                    <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-1 flex items-center gap-2">
+                      <span className="text-green-600">✨</span>
                       Category & Brand Offers
                     </h2>
                     <p className="text-xs text-muted-foreground">
