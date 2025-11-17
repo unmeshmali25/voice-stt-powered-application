@@ -21,7 +21,7 @@ from functools import wraps
 
 import numpy as np
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request, HTTPException, status, UploadFile, File, Depends, Header
+from fastapi import FastAPI, Request, HTTPException, status, UploadFile, File, Depends, Header, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from starlette.staticfiles import StaticFiles

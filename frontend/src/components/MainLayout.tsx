@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { SidebarProvider, SidebarInset } from './ui/sidebar'
 import { VoiceSidebar } from './VoiceSidebar'
 import { CouponCard } from './CouponCard'
@@ -117,12 +117,7 @@ export function MainLayout() {
   const [hasSearched, setHasSearched] = useState(false)
   const { user, signOut } = useAuth()
 
-  // Load personalized recommendations on startup
-  useEffect(() => {
-    loadRecommendations()
-  }, [user])
-
-  const loadRecommendations = async () => {
+  const loadRecommendations = useCallback(async () => {
     setIsLoadingProducts(true)
 
     try {
@@ -172,7 +167,12 @@ export function MainLayout() {
     } finally {
       setIsLoadingProducts(false)
     }
-  }
+  }, []) // Empty dependency array - only create once
+
+  // Load personalized recommendations on startup (only once)
+  useEffect(() => {
+    loadRecommendations()
+  }, [loadRecommendations])
 
   const handleTranscriptChange = async (newTranscript: string) => {
     setTranscript(newTranscript)
@@ -181,8 +181,8 @@ export function MainLayout() {
     // If transcript is empty, reset to recommendations
     if (!newTranscript.trim()) {
       loadRecommendations()
-      setFrontstoreCoupons(mockFrontstoreCoupons)
-      setCategoryBrandCoupons(mockCategoryBrandCoupons)
+      setFrontstoreCoupons([])
+      setCategoryBrandCoupons([])
       setHasSearched(false)
       return
     }
