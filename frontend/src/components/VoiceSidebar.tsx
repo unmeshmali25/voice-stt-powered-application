@@ -1,15 +1,16 @@
-import { useEffect } from 'react'
-import { Mic, MicOff } from 'lucide-react'
+import { useEffect, useState, useRef } from 'react'
+import { Mic, MicOff, Camera } from 'lucide-react'
 import {
   Sidebar,
   SidebarContent,
-  SidebarHeader,
   SidebarFooter,
   SidebarGroup,
   SidebarGroupLabel,
   SidebarGroupContent,
 } from './ui/sidebar'
 import { Button } from './ui/button'
+import { Input } from './ui/input'
+import { Glass } from './ui/glass'
 import { useVoiceRecording } from '../hooks/useVoiceRecording'
 
 interface VoiceSidebarProps {
@@ -18,6 +19,8 @@ interface VoiceSidebarProps {
 
 export function VoiceSidebar({ onTranscriptChange }: VoiceSidebarProps) {
   const { isRecording, transcript, error, latency, startRecording, stopRecording } = useVoiceRecording()
+  const [textInput, setTextInput] = useState('')
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (transcript && onTranscriptChange) {
@@ -49,41 +52,73 @@ export function VoiceSidebar({ onTranscriptChange }: VoiceSidebarProps) {
     }
   }
 
+  const handlePhotoClick = () => {
+    fileInputRef.current?.click()
+  }
+
+  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      // TODO: Implement photo upload/processing logic
+      console.log('Photo selected:', file.name)
+    }
+  }
+
+  const handleTextKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && textInput.trim() && onTranscriptChange) {
+      onTranscriptChange(textInput.trim())
+    }
+  }
+
   return (
     <Sidebar collapsible="none">
-      <SidebarHeader className="border-b border-sidebar-border">
-        <div className="flex items-center gap-2 px-2 py-3">
-          <div className="w-2.5 h-2.5 rounded-full bg-[#CC0000] shadow-[0_0_10px_rgba(204,0,0,0.6)]"></div>
-          <h2 className="font-semibold text-sm">Voice Controls</h2>
-        </div>
-      </SidebarHeader>
-
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel>Microphone</SidebarGroupLabel>
           <SidebarGroupContent>
-            <div className="flex flex-col items-center gap-4 py-6">
-              <Button
-                onClick={handleMicClick}
-                size="lg"
-                className={`
-                  w-20 h-20 rounded-full text-3xl transition-all duration-300
-                  ${isRecording
-                    ? 'bg-red-600 hover:bg-red-700 animate-pulse shadow-[0_0_30px_rgba(220,53,69,0.8)]'
-                    : 'bg-gradient-to-br from-[#CC0000] to-[#990000] hover:from-[#DD0000] hover:to-[#AA0000] hover:scale-105 shadow-[0_8px_24px_rgba(204,0,0,0.5)]'
-                  }
-                `}
-                aria-pressed={isRecording}
-                aria-label={isRecording ? 'Stop recording' : 'Start recording'}
-              >
-                {isRecording ? <MicOff className="w-8 h-8" /> : <Mic className="w-8 h-8" />}
-              </Button>
+            <div className="flex flex-col items-center gap-6 py-8 px-4">
+              {/* Microphone with Glass Design */}
+              <Glass className="w-full h-32 p-6 flex items-center justify-center">
+                <Button
+                  onClick={handleMicClick}
+                  size="lg"
+                  className={`
+                    w-20 h-20 rounded-full text-3xl transition-all duration-300
+                    ${isRecording
+                      ? 'bg-red-600 hover:bg-red-700 animate-pulse shadow-[0_0_30px_rgba(220,53,69,0.8)]'
+                      : 'bg-gradient-to-br from-[#CC0000] to-[#990000] hover:from-[#DD0000] hover:to-[#AA0000] hover:scale-105 shadow-[0_8px_24px_rgba(204,0,0,0.5)]'
+                    }
+                  `}
+                  aria-pressed={isRecording}
+                  aria-label={isRecording ? 'Stop recording' : 'Start recording'}
+                >
+                  {isRecording ? <MicOff className="w-8 h-8" /> : <Mic className="w-8 h-8" />}
+                </Button>
+              </Glass>
 
-              <div className="text-center px-4">
-                <p className="text-xs text-muted-foreground">
-                  {isRecording ? 'Recording... Click or press SPACE to stop' : 'Click or press SPACE to start'}
-                </p>
-              </div>
+              {/* Photo Icon Component */}
+              <Glass className="w-full h-32 p-4 flex items-center justify-center cursor-pointer hover:bg-white/5 transition-colors" onClick={handlePhotoClick}>
+                <Camera className="w-6 h-6 text-foreground" />
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handlePhotoChange}
+                  className="hidden"
+                  aria-label="Upload photo"
+                />
+              </Glass>
+
+              {/* Text Input Component */}
+              <Glass className="w-full h-32 p-3 flex items-center justify-center">
+                <Input
+                  type="text"
+                  placeholder="Type to search..."
+                  value={textInput}
+                  onChange={(e) => setTextInput(e.target.value)}
+                  onKeyDown={handleTextKeyDown}
+                  className="bg-transparent border-0 focus-visible:ring-0 placeholder:text-muted-foreground/60 w-full h-full text-center"
+                />
+              </Glass>
             </div>
           </SidebarGroupContent>
         </SidebarGroup>
