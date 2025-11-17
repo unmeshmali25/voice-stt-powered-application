@@ -1,0 +1,139 @@
+{
+  "products": [
+    {
+      "name": "CVS Durable Nitrile Exam Gloves",
+      "description": "Durable nitrile gloves for exam purposes. Latex-free, powder-free, disposable gloves. 50 count box.",
+      "image_url": "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=400&q=80",
+      "price": 15.79,
+      "rating": 5.0,
+      "review_count": 205,
+      "category": "Health",
+      "brand": "CVS Health",
+      "in_stock": true
+    },
+    {
+      "name": "CVS Extra Strength Acetaminophen Pain Reliever, Fever Reducer, 500 mg",
+      "description": "Pain reliever and fever reducer. Extra strength acetaminophen 500mg. 100 caplets per bottle.",
+      "image_url": "https://images.unsplash.com/photo-1587854692152-cbe660dbde88?w=400&q=80",
+      "price": 10.49,
+      "rating": 5.0,
+      "review_count": 345,
+      "category": "Health",
+      "brand": "CVS",
+      "in_stock": true
+    },
+    {
+      "name": "Nature's Bounty Magnesium Tablets 500mg",
+      "description": "Magnesium supplement for whole body support. Supports heart, nerve, and muscle function. 200 soft gels.",
+      "image_url": "https://images.unsplash.com/photo-1550572017-4340e44c1f6a?w=400&q=80",
+      "price": 19.49,
+      "rating": 5.0,
+      "review_count": 162,
+      "category": "Vitamins",
+      "brand": "Nature's Bounty",
+      "promo_text": "Buy 1, Get 1 Free",
+      "in_stock": true
+    },
+    {
+      "name": "One+other Premium Cotton Rounds",
+      "description": "Premium cotton rounds for makeup removal and skincare. Ultra-soft, lint-free, 80 count.",
+      "image_url": "https://images.unsplash.com/photo-1556228720-195a672e8a03?w=400&q=80",
+      "price": 4.19,
+      "rating": 5.0,
+      "review_count": 273,
+      "category": "Beauty",
+      "brand": "One+other",
+      "promo_text": "Buy 2, Get 1 Free",
+      "in_stock": true
+    },
+    {
+      "name": "Neutrogena Hydro Boost Water Gel Moisturizer",
+      "description": "Oil-free face moisturizer with hyaluronic acid. Hydrates and smooths skin. 1.7 oz jar.",
+      "image_url": "https://images.unsplash.com/photo-1556228852-80a86e59fd35?w=400&q=80",
+      "price": 17.99,
+      "rating": 4.5,
+      "review_count": 1289,
+      "category": "Beauty",
+      "brand": "Neutrogena",
+      "in_stock": true
+    },
+    {
+      "name": "CeraVe Foaming Facial Cleanser",
+      "description": "Face wash for normal to oily skin. Contains ceramides and hyaluronic acid. Fragrance-free, 12 oz.",
+      "image_url": "https://images.unsplash.com/photo-1571875257727-256c39da42af?w=400&q=80",
+      "price": 14.99,
+      "rating": 4.5,
+      "review_count": 892,
+      "category": "Beauty",
+      "brand": "CeraVe",
+      "in_stock": true
+    },
+    {
+      "name": "Aveeno Daily Moisturizing Lotion",
+      "description": "Body lotion with colloidal oatmeal and rich emollients. Clinically proven to improve dry skin. 18 oz.",
+      "image_url": "https://images.unsplash.com/photo-1608248543803-ba4f8c70ae0b?w=400&q=80",
+      "price": 11.49,
+      "rating": 4.5,
+      "review_count": 654,
+      "category": "Personal Care",
+      "brand": "Aveeno",
+      "in_stock": true
+    },
+    {
+      "name": "L'Oreal Paris Revitalift Anti-Wrinkle + Firming Face & Neck Cream",
+      "description": "Anti-aging moisturizer with Pro-Retinol and Centella Asiatica. Reduces wrinkles and firms skin. 1.7 oz.",
+      "image_url": "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=400&q=80",
+      "price": 24.99,
+      "rating": 4.0,
+      "review_count": 432,
+      "category": "Beauty",
+      "brand": "L'Oreal Paris",
+      "in_stock": true
+    },
+    {
+      "name": "Vaseline Advanced Repair Body Lotion",
+      "description": "Healing moisture for extra dry skin. Non-greasy formula with micro-droplets of Vaseline jelly. 20 oz.",
+      "image_url": "https://images.unsplash.com/photo-1556228994-11d8a1cdb07f?w=400&q=80",
+      "price": 8.99,
+      "rating": 4.5,
+      "review_count": 521,
+      "category": "Personal Care",
+      "brand": "Vaseline",
+      "in_stock": true
+    },
+    {
+      "name": "Cetaphil Gentle Skin Cleanser",
+      "description": "Mild, soap-free cleanser for all skin types. Dermatologist recommended. Non-comedogenic. 16 oz.",
+      "image_url": "https://images.unsplash.com/photo-1556228720-195a672e8a03?w=400&q=80",
+      "price": 13.99,
+      "rating": 4.5,
+      "review_count": 987,
+      "category": "Beauty",
+      "brand": "Cetaphil",
+      "in_stock": true
+    },
+    {
+      "name": "Olay Regenerist Retinol 24 Night Moisturizer",
+      "description": "Anti-aging face moisturizer with Retinol and Vitamin B3. Fragrance-free, penetrates deep. 1.7 oz.",
+      "image_url": "https://images.unsplash.com/photo-1556228578-0d85b1a4d571?w=400&q=80",
+      "price": 29.99,
+      "rating": 4.5,
+      "review_count": 743,
+      "category": "Beauty",
+      "brand": "Olay",
+      "in_stock": true
+    },
+    {
+      "name": "Eucerin Advanced Repair Cream",
+      "description": "Intense moisture for very dry skin. Ceramide-fortified formula. Fragrance-free. 16 oz jar.",
+      "image_url": "https://images.unsplash.com/photo-1556228994-11d8a1cdb07f?w=400&q=80",
+      "price": 16.99,
+      "rating": 4.5,
+      "review_count": 456,
+      "category": "Personal Care",
+      "brand": "Eucerin",
+      "in_stock": true
+    }
+  ]
+}
+

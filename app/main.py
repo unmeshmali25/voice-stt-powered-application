@@ -750,6 +750,199 @@ async def coupon_search(
         )
 
 
+# --- Product Search Endpoint ---
+
+@app.post("/api/products/search")
+@limiter.limit("30/minute")  # Rate limit: 30 searches per minute per IP
+async def product_search(
+    request: Request,
+    user: Dict[str, Any] = Depends(verify_token),
+    db: Session = Depends(get_db)
+) -> JSONResponse:
+    """
+    Search for products using full-text search.
+    
+    Returns: { "products": [{ id, name, description, imageUrl, price, rating, ... }], "count": int }
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    
+    query = (payload or {}).get("query", "")
+    limit = min(int(payload.get("limit", 10)), 50)  # Max 50 products
+    
+    if not isinstance(query, str) or not query.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing 'query' in request body"
+        )
+    
+    user_id = user["user_id"]
+    logger.info(f"User {user_id} searching products with query: '{query}'")
+    
+    # Clean query
+    search_query = query.strip()
+    
+    try:
+        # Full-text search on products
+        result = db.execute(
+            text("""
+                SELECT 
+                    id, name, description, image_url, price, 
+                    rating, review_count, category, brand, 
+                    promo_text, in_stock,
+                    ts_rank(text_vector, websearch_to_tsquery('english', :query)) as rank
+                FROM products
+                WHERE text_vector @@ websearch_to_tsquery('english', :query)
+                    AND in_stock = true
+                ORDER BY rank DESC, rating DESC NULLS LAST
+                LIMIT :limit
+            """),
+            {"query": search_query, "limit": limit}
+        )
+        rows = result.fetchall()
+        logger.info(f"Product search returned {len(rows)} results")
+        
+        if not rows:
+            # Fallback to ILIKE if no FTS results
+            logger.info("FTS returned no products. Falling back to ILIKE.")
+            result = db.execute(
+                text("""
+                    SELECT 
+                        id, name, description, image_url, price, 
+                        rating, review_count, category, brand, 
+                        promo_text, in_stock,
+                        0 as rank
+                    FROM products
+                    WHERE in_stock = true
+                        AND (name ILIKE :pattern
+                             OR description ILIKE :pattern
+                             OR category ILIKE :pattern
+                             OR brand ILIKE :pattern)
+                    ORDER BY rating DESC NULLS LAST, review_count DESC NULLS LAST
+                    LIMIT :limit
+                """),
+                {
+                    "pattern": f"%{search_query}%",
+                    "limit": limit
+                }
+            )
+            rows = result.fetchall()
+            logger.info(f"ILIKE search returned {len(rows)} products")
+        
+        # Build product list
+        products = []
+        for row in rows:
+            products.append({
+                "id": str(row[0]),
+                "name": row[1],
+                "description": row[2],
+                "imageUrl": row[3],
+                "price": float(row[4]) if row[4] else 0.0,
+                "rating": float(row[5]) if row[5] else None,
+                "reviewCount": row[6] if row[6] else 0,
+                "category": row[7],
+                "brand": row[8],
+                "promoText": row[9],
+                "inStock": row[10]
+            })
+        
+        return JSONResponse({
+            "products": products,
+            "count": len(products)
+        }, status_code=200)
+    
+    except Exception as e:
+        logger.exception(f"Product search failed for user {user_id}: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Product search failed: {str(e)}"
+        )
+
+
+@app.get("/api/products/search")
+@limiter.limit("30/minute")
+async def product_search_get(
+    request: Request,
+    query: str = Query(..., min_length=1),
+    limit: int = Query(10, ge=1, le=50),
+    user: Dict[str, Any] = Depends(verify_token),
+    db: Session = Depends(get_db)
+) -> JSONResponse:
+    """GET version of product search for easier testing"""
+    user_id = user["user_id"]
+    logger.info(f"User {user_id} searching products (GET) with query: '{query}'")
+    
+    search_query = query.strip()
+    
+    try:
+        # Full-text search on products
+        result = db.execute(
+            text("""
+                SELECT 
+                    id, name, description, image_url, price, 
+                    rating, review_count, category, brand, 
+                    promo_text, in_stock,
+                    ts_rank(text_vector, websearch_to_tsquery('english', :query)) as rank
+                FROM products
+                WHERE text_vector @@ websearch_to_tsquery('english', :query)
+                    AND in_stock = true
+                ORDER BY rank DESC, rating DESC NULLS LAST
+                LIMIT :limit
+            """),
+            {"query": search_query, "limit": limit}
+        )
+        rows = result.fetchall()
+        
+        if not rows:
+            # Fallback to ILIKE
+            result = db.execute(
+                text("""
+                    SELECT 
+                        id, name, description, image_url, price, 
+                        rating, review_count, category, brand, 
+                        promo_text, in_stock,
+                        0 as rank
+                    FROM products
+                    WHERE in_stock = true
+                        AND (name ILIKE :pattern
+                             OR description ILIKE :pattern
+                             OR category ILIKE :pattern
+                             OR brand ILIKE :pattern)
+                    ORDER BY rating DESC NULLS LAST, review_count DESC NULLS LAST
+                    LIMIT :limit
+                """),
+                {"pattern": f"%{search_query}%", "limit": limit}
+            )
+            rows = result.fetchall()
+        
+        products = []
+        for row in rows:
+            products.append({
+                "id": str(row[0]),
+                "name": row[1],
+                "description": row[2],
+                "imageUrl": row[3],
+                "price": float(row[4]) if row[4] else 0.0,
+                "rating": float(row[5]) if row[5] else None,
+                "reviewCount": row[6] if row[6] else 0,
+                "category": row[7],
+                "brand": row[8],
+                "promoText": row[9],
+                "inStock": row[10]
+            })
+        
+        return JSONResponse({"products": products, "count": len(products)}, status_code=200)
+    
+    except Exception as e:
+        logger.exception(f"Product search (GET) failed for user {user_id}: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Product search failed: {str(e)}"
+        )
+
+
 if __name__ == "__main__":
     try:
         import uvicorn
