@@ -133,7 +133,171 @@
       "category": "Personal Care",
       "brand": "Eucerin",
       "in_stock": true
+    },
+    {
+      "name": "Supergoop! Play SPF 50",
+      "description": "A fast-absorbing, non-greasy, water- and sweat-resistant, broad-spectrum SPF 50 lotion for face and body.",
+      "image_url": "https://images.unsplash.com/photo-1556911220-bff31c812dba?w=400&q=80",
+      "price": 22.00,
+      "rating": 4.7,
+      "review_count": 2345,
+      "category": "Sunscreen",
+      "brand": "Supergoop!",
+      "in_stock": true
+    },
+    {
+      "name": "EltaMD UV Clear SPF 46",
+      "description": "Oil-free, lightweight and silky, it calms and protects sensitive skin types prone to discoloration and breakouts associated with acne and rosacea.",
+      "image_url": "https://images.unsplash.com/photo-1556911220-bff31c812dba?w=400&q=80",
+      "price": 37.00,
+      "rating": 4.8,
+      "review_count": 15678,
+      "category": "Sunscreen",
+      "brand": "EltaMD",
+      "in_stock": true
+    },
+    {
+      "name": "Kiehl's Ultra Facial Cleanser",
+      "description": "A gentle face wash that helps lift away dirt and excess oil without over-drying skin.",
+      "image_url": "https://images.unsplash.com/photo-1556911220-bff31c812dba?w=400&q=80",
+      "price": 23.00,
+      "rating": 4.6,
+      "review_count": 3456,
+      "category": "Facewash",
+      "brand": "Kiehl's",
+      "in_stock": true
+    },
+    {
+      "name": "Aquaphor Lip Repair",
+      "description": "Clinically proven to relieve dryness and soothe chapped, cracked lips.",
+      "image_url": "https://images.unsplash.com/photo-1556911220-bff31c812dba?w=400&q=80",
+      "price": 3.99,
+      "rating": 4.8,
+      "review_count": 12345,
+      "category": "Lip Balm",
+      "brand": "Aquaphor",
+      "in_stock": true
+    },
+    {
+      "name": "Glow Recipe Watermelon Glow Niacinamide Dew Drops",
+      "description": "A breakthrough, multi-use highlighting serum that hydrates and visibly reduces the look of hyperpigmentation for a dewy, reflective glow—without mica, glitter, or gray cast.",
+      "image_url": "https://images.unsplash.com/photo-1556911220-bff31c812dba?w=400&q=80",
+      "price": 34.00,
+      "rating": 4.7,
+      "review_count": 4567,
+      "category": "Serum",
+      "brand": "Glow Recipe",
+      "in_stock": true
+    },
+    {
+      "name": "Ritual Essential for Women 18+ Multivitamin",
+      "description": "The clinical-backed multivitamin, reimagined for women 18+.",
+      "image_url": "https://images.unsplash.com/photo-1556911220-bff31c812dba?w=400&q=80",
+      "price": 30.00,
+      "rating": 4.5,
+      "review_count": 8910,
+      "category": "Vitamins",
+      "brand": "Ritual",
+      "in_stock": true
+    },
+    {
+      "name": "MAC Retro Matte Lipstick",
+      "description": "A long-wearing lipstick formula with intense color payoff and a completely matte finish.",
+      "image_url": "https://images.unsplash.com/photo-1556911220-bff31c812dba?w=400&q=80",
+      "price": 21.00,
+      "rating": 4.6,
+      "review_count": 11121,
+      "category": "Lipstick",
+      "brand": "MAC",
+      "in_stock": true
+    },
+    {
+      "name": "Always Infinity Flexfoam Pads with Wings",
+      "description": "Experience the ultimate in period protection with Always Infinity FlexFoam pads. These revolutionary pads are made with a super-absorbent material that is surprisingly thin and flexible.",
+      "image_url": "https://images.unsplash.com/photo-1556911220-bff31c812dba?w=400&q=80",
+      "price": 7.99,
+      "rating": 4.7,
+      "review_count": 5432,
+      "category": "Sanitary Pads",
+      "brand": "Always",
+      "in_stock": true
+    },
+    {
+      "name": "Charmin Ultra Soft Toilet Paper",
+      "description": "Charmin Ultra Soft is our softest toilet paper ever so it’s harder than ever to resist! It’s 2X more absorbent and you can use less versus the leading bargain brand.",
+      "image_url": "https://images.unsplash.com/photo-1556911220-bff31c812dba?w=400&q=80",
+      "price": 19.99,
+      "rating": 4.8,
+      "review_count": 23456,
+      "category": "Toilet Paper",
+      "brand": "Charmin",
+      "in_stock": true
+    },
+    {
+      "name": "Bounty Select-A-Size Paper Towels",
+      "description": "The Quicker Picker Upper! Bounty Select-A-Size paper towels are 2X more absorbent, so you can use less.",
+      "image_url": "https://images.unsplash.com/photo-1556911220-bff31c812dba?w=400&q=80",
+      "price": 21.99,
+      "rating": 4.9,
+      "review_count": 34567,
+      "category": "Kitchen Towels",
+      "brand": "Bounty",
+      "in_stock": true
+    },
+    {
+      "name": "Tide PODS Laundry Detergent Soap Pods",
+      "description": "Tide PODS® offer a 3-in-1 laundry solution with super-concentrated detergent, powerful stain removers and color protectors to get the job done right.",
+      "image_url": "https://images.unsplash.com/photo-1556911220-bff31c812dba?w=400&q=80",
+      "price": 19.97,
+      "rating": 4.8,
+      "review_count": 45678,
+      "category": "Detergent",
+      "brand": "Tide",
+      "in_stock": true
+    },
+    {
+      "name": "Crest 3D White Brilliance Toothpaste",
+      "description": "Crest 3D White Brilliance Toothpaste whitens teeth by removing up to 100% of stains in 5 days, with 24-hour stain protection when paired with twice-daily brushing.",
+      "image_url": "https://images.unsplash.com/photo-1556911220-bff31c812dba?w=400&q=80",
+      "price": 6.99,
+      "rating": 4.7,
+      "review_count": 18910,
+      "category": "Toothpaste",
+      "brand": "Crest",
+      "in_stock": true
+    },
+    {
+      "name": "Nécessaire The Body Wash Eucalyptus",
+      "description": "A daily multivitamin cleanser for the body. The Body Wash is a vitamin-rich gel-oil that gently cleanses, softens, and nourishes skin.",
+      "image_url": "https://images.unsplash.com/photo-1556911220-bff31c812dba?w=400&q=80",
+      "price": 25.00,
+      "rating": 4.6,
+      "review_count": 2345,
+      "category": "Body Wash",
+      "brand": "Nécessaire",
+      "in_stock": true
+    },
+    {
+      "name": "Oral-B CrossAction Manual Toothbrush",
+      "description": "Removes up to 99% of plaque in hard-to-reach areas.",
+      "image_url": "https://images.unsplash.com/photo-1556911220-bff31c812dba?w=400&q=80",
+      "price": 3.99,
+      "rating": 4.5,
+      "review_count": 6789,
+      "category": "Toothbrush",
+      "brand": "Oral-B",
+      "in_stock": true
+    },
+    {
+      "name": "Lysol Kitchen Pro Antibacterial Cleaner",
+      "description": "Cuts through tough kitchen grease and grime. Kills 99.9% of viruses and bacteria.",
+      "image_url": "https://images.unsplash.com/photo-1556911220-bff31c812dba?w=400&q=80",
+      "price": 4.99,
+      "rating": 4.7,
+      "review_count": 9876,
+      "category": "Cleaning Products",
+      "brand": "Lysol",
+      "in_stock": true
     }
   ]
 }
-

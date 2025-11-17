@@ -943,6 +943,107 @@ async def product_search_get(
         )
 
 
+@app.get("/api/products/recommendations")
+@limiter.limit("60/minute")
+async def product_recommendations(
+    request: Request,
+    limit: int = Query(5, ge=1, le=20),
+    user: Dict[str, Any] = Depends(verify_token),
+    db: Session = Depends(get_db)
+) -> JSONResponse:
+    """
+    Get personalized product recommendations for user.
+
+    Logic:
+    1. Analyze user's search history and coupon usage
+    2. Find most frequent categories/brands
+    3. Return products matching user preferences
+    4. Fallback to top-rated products if no history
+
+    Returns: { "products": [...], "count": int, "personalized": bool }
+    """
+    user_id = user["user_id"]
+    logger.info(f"User {user_id} requesting {limit} product recommendations")
+
+    try:
+        # Try to get personalized recommendations based on user's coupon categories
+        result = db.execute(
+            text("""
+                WITH user_categories AS (
+                    SELECT DISTINCT c.category_or_brand as category
+                    FROM user_coupons uc
+                    JOIN coupons c ON uc.coupon_id = c.id
+                    WHERE uc.user_id = :user_id
+                        AND c.type IN ('category', 'brand')
+                        AND c.category_or_brand IS NOT NULL
+                    LIMIT 5
+                )
+                SELECT DISTINCT
+                    p.id, p.name, p.description, p.image_url, p.price,
+                    p.rating, p.review_count, p.category, p.brand,
+                    p.promo_text, p.in_stock
+                FROM products p
+                WHERE p.in_stock = true
+                    AND (p.category IN (SELECT category FROM user_categories)
+                         OR p.brand IN (SELECT category FROM user_categories))
+                ORDER BY p.rating DESC NULLS LAST, p.review_count DESC NULLS LAST
+                LIMIT :limit
+            """),
+            {"user_id": user_id, "limit": limit}
+        )
+        rows = result.fetchall()
+
+        personalized = len(rows) > 0
+
+        # If no personalized results, fallback to top-rated products
+        if not rows:
+            logger.info(f"No personalized recommendations for user {user_id}, using top-rated fallback")
+            result = db.execute(
+                text("""
+                    SELECT
+                        id, name, description, image_url, price,
+                        rating, review_count, category, brand,
+                        promo_text, in_stock
+                    FROM products
+                    WHERE in_stock = true
+                    ORDER BY rating DESC NULLS LAST, review_count DESC NULLS LAST
+                    LIMIT :limit
+                """),
+                {"limit": limit}
+            )
+            rows = result.fetchall()
+
+        products = []
+        for row in rows:
+            products.append({
+                "id": str(row[0]),
+                "name": row[1],
+                "description": row[2],
+                "imageUrl": row[3],
+                "price": float(row[4]) if row[4] else 0.0,
+                "rating": float(row[5]) if row[5] else None,
+                "reviewCount": row[6] if row[6] else 0,
+                "category": row[7],
+                "brand": row[8],
+                "promoText": row[9],
+                "inStock": row[10]
+            })
+
+        logger.info(f"Returning {len(products)} recommendations (personalized={personalized})")
+        return JSONResponse({
+            "products": products,
+            "count": len(products),
+            "personalized": personalized
+        }, status_code=200)
+
+    except Exception as e:
+        logger.exception(f"Recommendations failed for user {user_id}: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get recommendations: {str(e)}"
+        )
+
+
 if __name__ == "__main__":
     try:
         import uvicorn

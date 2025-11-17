@@ -1,13 +1,15 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { SidebarProvider, SidebarInset } from './ui/sidebar'
 import { VoiceSidebar } from './VoiceSidebar'
 import { CouponCard } from './CouponCard'
 import { ProductCard } from './ProductCard'
 import { ChristmasDecorations } from './ChristmasDecorations'
+import { ProductCardSkeleton, CouponCardSkeleton, NoResults } from './SkeletonLoader'
 import { Coupon } from '../types/coupon'
 import { Product } from '../types/product'
 import { useAuth } from '../hooks/useAuth'
 import { Button } from './ui/button'
+import { supabase } from '../lib/supabase'
 
 // Mock data - will be replaced with real data from backend
 const mockFrontstoreCoupons: Coupon[] = [
@@ -106,15 +108,163 @@ const mockProducts: Product[] = [
 
 export function MainLayout() {
   const [transcript, setTranscript] = useState<string>('')
-  const [products] = useState<Product[]>(mockProducts)
+  const [products, setProducts] = useState<Product[]>([])
+  const [frontstoreCoupons, setFrontstoreCoupons] = useState<Coupon[]>([])
+  const [categoryBrandCoupons, setCategoryBrandCoupons] = useState<Coupon[]>([])
   const [hoveredProductId, setHoveredProductId] = useState<string | null>(null)
+  const [isLoadingProducts, setIsLoadingProducts] = useState(false)
+  const [isLoadingCoupons, setIsLoadingCoupons] = useState(false)
+  const [hasSearched, setHasSearched] = useState(false)
   const { user, signOut } = useAuth()
 
-  // This will be replaced with actual search logic when backend is connected
-  const handleTranscriptChange = (newTranscript: string) => {
+  // Load personalized recommendations on startup
+  useEffect(() => {
+    loadRecommendations()
+  }, [user])
+
+  const loadRecommendations = async () => {
+    setIsLoadingProducts(true)
+
+    try {
+      // Get auth token
+      const { data: { session } } = await supabase.auth.getSession()
+
+      if (!session?.access_token) {
+        console.log('No session, showing default products')
+        setProducts(mockProducts.slice(0, 5)) // Show 5 mock products as fallback
+        return
+      }
+
+      // Fetch personalized recommendations
+      const response = await fetch('/api/products/recommendations?limit=5', {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        }
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        console.log(`Loaded ${data.count} recommendations (personalized=${data.personalized})`)
+        const transformedProducts = data.products.map((p: any) => ({
+          id: p.id,
+          name: p.name,
+          description: p.description,
+          imageUrl: p.imageUrl,
+          price: p.price,
+          rating: p.rating,
+          reviewCount: p.reviewCount,
+          category: p.category,
+          brand: p.brand,
+          promoText: p.promoText,
+          inStock: p.inStock
+        }))
+        setProducts(transformedProducts)
+      } else {
+        // Fallback to mock data
+        console.log('Recommendations API failed, using mock data')
+        setProducts(mockProducts.slice(0, 5))
+      }
+    } catch (error) {
+      console.error('Failed to load recommendations:', error)
+      setProducts(mockProducts.slice(0, 5))
+    } finally {
+      setIsLoadingProducts(false)
+    }
+  }
+
+  const handleTranscriptChange = async (newTranscript: string) => {
     setTranscript(newTranscript)
-    console.log('Searching for:', newTranscript)
-    // TODO: Implement PostgreSQL search when backend is ready
+    setHasSearched(true)
+
+    // If transcript is empty, reset to recommendations
+    if (!newTranscript.trim()) {
+      loadRecommendations()
+      setFrontstoreCoupons(mockFrontstoreCoupons)
+      setCategoryBrandCoupons(mockCategoryBrandCoupons)
+      setHasSearched(false)
+      return
+    }
+
+    // Get auth token
+    const { data: { session } } = await supabase.auth.getSession()
+
+    if (!session?.access_token) {
+      console.error('No authentication token available')
+      return
+    }
+
+    // Search products
+    setIsLoadingProducts(true)
+    try {
+      const productsResponse = await fetch('/api/products/search', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ query: newTranscript, limit: 50 })
+      })
+
+      if (productsResponse.ok) {
+        const productsData = await productsResponse.json()
+        const transformedProducts = productsData.products.map((p: any) => ({
+          id: p.id,
+          name: p.name,
+          description: p.description,
+          imageUrl: p.imageUrl,  // Backend already returns camelCase
+          price: p.price,
+          rating: p.rating,
+          reviewCount: p.reviewCount,  // Backend already returns camelCase
+          category: p.category,
+          brand: p.brand,
+          promoText: p.promoText,  // Backend already returns camelCase
+          inStock: p.inStock  // Backend already returns camelCase
+        }))
+        setProducts(transformedProducts)
+      }
+    } catch (error) {
+      console.error('Product search failed:', error)
+    } finally {
+      setIsLoadingProducts(false)
+    }
+
+    // Search coupons (user-specific only)
+    setIsLoadingCoupons(true)
+    try {
+      const couponsResponse = await fetch('/api/coupons/search', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ question: newTranscript })
+      })
+
+      if (couponsResponse.ok) {
+        const couponsData = await couponsResponse.json()
+        const transformedCoupons = couponsData.results.map((c: any) => ({
+          id: c.id,
+          type: c.type,
+          discountDetails: c.discount_details || c.discountDetails,  // Handle both formats
+          categoryOrBrand: c.category_or_brand || c.categoryOrBrand,
+          expirationDate: c.expiration_date || c.expirationDate,
+          terms: c.terms
+        }))
+
+        // Split by type
+        const frontstore = transformedCoupons.filter((c: Coupon) => c.type === 'frontstore')
+        const categoryBrand = transformedCoupons.filter((c: Coupon) => c.type !== 'frontstore')
+
+        setFrontstoreCoupons(frontstore)
+        setCategoryBrandCoupons(categoryBrand)
+      }
+    } catch (error) {
+      console.error('Coupon search failed:', error)
+    } finally {
+      setIsLoadingCoupons(false)
+    }
   }
 
   const handleSignOut = async () => {
@@ -166,28 +316,74 @@ export function MainLayout() {
                       {transcript ? `Products matching "${transcript}"` : 'Popular products'}
                     </p>
                   </div>
-                  <div className="relative flex flex-col items-start">
-                    <div className="w-[72%] relative flex flex-col">
-                      {products.map((product, index) => (
-                        <div
-                          key={product.id}
-                          className={`relative transition-all duration-300 ${
-                            hoveredProductId && hoveredProductId !== product.id
-                              ? 'opacity-60'
-                              : 'opacity-100'
-                          }`}
-                          style={{
-                            marginTop: index === 0 ? '0' : '-4rem',
-                            zIndex: hoveredProductId === product.id ? 50 : 10
-                          }}
-                          onMouseEnter={() => setHoveredProductId(product.id)}
-                          onMouseLeave={() => setHoveredProductId(null)}
-                        >
-                          <ProductCard product={product} />
-                        </div>
-                      ))}
+
+                  {isLoadingProducts ? (
+                    <div className="relative flex flex-col items-start">
+                      <div className="w-[72%] relative flex flex-col">
+                        {[...Array(5)].map((_, index) => (
+                          <div
+                            key={index}
+                            style={{
+                              marginTop: index === 0 ? '0' : '-4rem',
+                              zIndex: 10
+                            }}
+                          >
+                            <ProductCardSkeleton />
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                  </div>
+                  ) : products.length === 0 && hasSearched ? (
+                    <>
+                      <NoResults query={transcript} />
+                      <div className="relative flex flex-col items-start mt-8">
+                        <h3 className="text-lg font-semibold mb-4">Suggested Products</h3>
+                        <div className="w-[72%] relative flex flex-col">
+                          {mockProducts.slice(0, 5).map((product, index) => (
+                            <div
+                              key={product.id}
+                              className={`relative transition-all duration-300 ${
+                                hoveredProductId && hoveredProductId !== product.id
+                                  ? 'opacity-60'
+                                  : 'opacity-100'
+                              }`}
+                              style={{
+                                marginTop: index === 0 ? '0' : '-4rem',
+                                zIndex: hoveredProductId === product.id ? 50 : 10
+                              }}
+                              onMouseEnter={() => setHoveredProductId(product.id)}
+                              onMouseLeave={() => setHoveredProductId(null)}
+                            >
+                              <ProductCard product={product} />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="relative flex flex-col items-start">
+                      <div className="w-[72%] relative flex flex-col">
+                        {products.map((product, index) => (
+                          <div
+                            key={product.id}
+                            className={`relative transition-all duration-300 ${
+                              hoveredProductId && hoveredProductId !== product.id
+                                ? 'opacity-60'
+                                : 'opacity-100'
+                            }`}
+                            style={{
+                              marginTop: index === 0 ? '0' : '-4rem',
+                              zIndex: hoveredProductId === product.id ? 50 : 10
+                            }}
+                            onMouseEnter={() => setHoveredProductId(product.id)}
+                            onMouseLeave={() => setHoveredProductId(null)}
+                          >
+                            <ProductCard product={product} />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* MIDDLE COLUMN: Front-store Offers */}
@@ -202,9 +398,21 @@ export function MainLayout() {
                     </p>
                   </div>
                   <div className="space-y-4">
-                    {mockFrontstoreCoupons.map((coupon) => (
-                      <CouponCard key={coupon.id} coupon={coupon} />
-                    ))}
+                    {isLoadingCoupons ? (
+                      <>
+                        {[...Array(3)].map((_, index) => (
+                          <CouponCardSkeleton key={index} />
+                        ))}
+                      </>
+                    ) : frontstoreCoupons.length === 0 ? (
+                      <div className="text-sm text-muted-foreground text-center py-8">
+                        {hasSearched ? 'No frontstore coupons match your search' : 'No frontstore coupons available'}
+                      </div>
+                    ) : (
+                      frontstoreCoupons.map((coupon) => (
+                        <CouponCard key={coupon.id} coupon={coupon} />
+                      ))
+                    )}
                   </div>
                 </div>
 
@@ -220,9 +428,21 @@ export function MainLayout() {
                     </p>
                   </div>
                   <div className="space-y-4">
-                    {mockCategoryBrandCoupons.map((coupon) => (
-                      <CouponCard key={coupon.id} coupon={coupon} />
-                    ))}
+                    {isLoadingCoupons ? (
+                      <>
+                        {[...Array(3)].map((_, index) => (
+                          <CouponCardSkeleton key={index} />
+                        ))}
+                      </>
+                    ) : categoryBrandCoupons.length === 0 ? (
+                      <div className="text-sm text-muted-foreground text-center py-8">
+                        {hasSearched ? 'No category/brand coupons match your search' : 'Use voice search to find relevant coupons'}
+                      </div>
+                    ) : (
+                      categoryBrandCoupons.map((coupon) => (
+                        <CouponCard key={coupon.id} coupon={coupon} />
+                      ))
+                    )}
                   </div>
                 </div>
               </div>
