@@ -26,7 +26,7 @@ export function VoiceSidebar({ onTranscriptChange }: VoiceSidebarProps) {
     if (transcript && onTranscriptChange) {
       onTranscriptChange(transcript)
     }
-  }, [transcript, onTranscriptChange])
+  }, [transcript])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {

@@ -10,6 +10,7 @@ import { Product } from '../types/product'
 import { useAuth } from '../hooks/useAuth'
 import { Button } from './ui/button'
 import { supabase } from '../lib/supabase'
+import { apiFetch } from '../lib/api'
 
 // Mock data - will be replaced with real data from backend
 const mockFrontstoreCoupons: Coupon[] = [
@@ -131,12 +132,8 @@ export function MainLayout() {
       }
 
       // Fetch personalized recommendations
-      const response = await fetch('/api/products/recommendations?limit=5', {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${session.access_token}`,
-          'Content-Type': 'application/json'
-        }
+      const response = await apiFetch('/api/products/recommendations?limit=5', {
+        method: 'GET'
       })
 
       if (response.ok) {
@@ -174,7 +171,7 @@ export function MainLayout() {
     loadRecommendations()
   }, [loadRecommendations])
 
-  const handleTranscriptChange = async (newTranscript: string) => {
+  const handleTranscriptChange = useCallback(async (newTranscript: string) => {
     setTranscript(newTranscript)
     setHasSearched(true)
 
@@ -198,10 +195,9 @@ export function MainLayout() {
     // Search products
     setIsLoadingProducts(true)
     try {
-      const productsResponse = await fetch('/api/products/search', {
+      const productsResponse = await apiFetch('/api/products/search', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${session.access_token}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({ query: newTranscript, limit: 50 })
@@ -233,10 +229,9 @@ export function MainLayout() {
     // Search coupons (user-specific only)
     setIsLoadingCoupons(true)
     try {
-      const couponsResponse = await fetch('/api/coupons/search', {
+      const couponsResponse = await apiFetch('/api/coupons/search', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${session.access_token}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({ question: newTranscript })
@@ -265,7 +260,7 @@ export function MainLayout() {
     } finally {
       setIsLoadingCoupons(false)
     }
-  }
+  }, [loadRecommendations])
 
   const handleSignOut = async () => {
     await signOut()
