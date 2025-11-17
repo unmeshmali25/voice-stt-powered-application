@@ -82,7 +82,7 @@ export function VoiceSidebar({ onTranscriptChange }: VoiceSidebarProps) {
                   onClick={handleMicClick}
                   size="lg"
                   className={`
-                    w-20 h-20 rounded-full text-3xl transition-all duration-300
+                    w-12 h-12 rounded-full text-2xl transition-all duration-300
                     ${isRecording
                       ? 'bg-red-600 hover:bg-red-700 animate-pulse shadow-[0_0_30px_rgba(220,53,69,0.8)]'
                       : 'bg-gradient-to-br from-[#CC0000] to-[#990000] hover:from-[#DD0000] hover:to-[#AA0000] hover:scale-105 shadow-[0_8px_24px_rgba(204,0,0,0.5)]'
@@ -91,13 +91,20 @@ export function VoiceSidebar({ onTranscriptChange }: VoiceSidebarProps) {
                   aria-pressed={isRecording}
                   aria-label={isRecording ? 'Stop recording' : 'Start recording'}
                 >
-                  {isRecording ? <MicOff className="w-8 h-8" /> : <Mic className="w-8 h-8" />}
+                  {isRecording ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
                 </Button>
               </Glass>
 
               {/* Photo Icon Component */}
-              <Glass className="w-full h-32 p-4 flex items-center justify-center cursor-pointer hover:bg-white/5 transition-colors" onClick={handlePhotoClick}>
-                <Camera className="w-6 h-6 text-foreground" />
+              <Glass className="w-full h-32 p-6 flex items-center justify-center">
+                <Button
+                  onClick={handlePhotoClick}
+                  size="lg"
+                  className="w-12 h-12 rounded-full text-2xl transition-all duration-300 bg-gradient-to-br from-sky-400 to-cyan-500 hover:from-sky-500 hover:to-cyan-600 hover:scale-105 shadow-[0_8px_24px_rgba(56,189,248,0.5)] hover:shadow-[0_12px_32px_rgba(56,189,248,0.7)]"
+                  aria-label="Upload photo"
+                >
+                  <Camera className="w-5 h-5" />
+                </Button>
                 <input
                   ref={fileInputRef}
                   type="file"

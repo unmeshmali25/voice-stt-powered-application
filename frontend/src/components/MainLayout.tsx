@@ -142,7 +142,7 @@ export function MainLayout() {
           <main className="flex-1 p-6">
             <div className="max-w-7xl mx-auto">
               {/* Three-column grid */}
-              <div className="grid grid-cols-1 gap-6 px-4 sm:px-6 lg:px-8 lg:gap-8" style={{ gridTemplateColumns: 'repeat(1, minmax(0, 1fr))' }} data-lg-grid="true">
+              <div className="grid grid-cols-1 gap-6 px-4 sm:px-6 lg:px-8 lg:gap-16" style={{ gridTemplateColumns: 'repeat(1, minmax(0, 1fr))' }} data-lg-grid="true">
                 <style>{`
                   @media (min-width: 1024px) {
                     [data-lg-grid="true"] {
@@ -161,9 +161,15 @@ export function MainLayout() {
                       {transcript ? `Products matching "${transcript}"` : 'Popular products'}
                     </p>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-4">
-                    {products.map((product) => (
-                      <ProductCard key={product.id} product={product} />
+                  <div className="relative flex flex-col">
+                    {products.map((product, index) => (
+                      <div
+                        key={product.id}
+                        className="relative"
+                        style={{ marginTop: index === 0 ? '0' : '-4rem' }}
+                      >
+                        <ProductCard product={product} />
+                      </div>
                     ))}
                   </div>
                 </div>
