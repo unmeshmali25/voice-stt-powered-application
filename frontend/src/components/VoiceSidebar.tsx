@@ -21,12 +21,18 @@ interface VoiceSidebarProps {
 export function VoiceSidebar({ onTranscriptChange }: VoiceSidebarProps) {
   const { isRecording, transcript, error, latency, startRecording, stopRecording } = useVoiceRecording()
   const [textInput, setTextInput] = useState('')
+  const [statusDisplay, setStatusDisplay] = useState<{ type: 'transcript' | 'search', value: string } | null>(null)
 
   useEffect(() => {
-    if (transcript && onTranscriptChange) {
-      onTranscriptChange(transcript)
+    if (transcript) {
+      setStatusDisplay({ type: 'transcript', value: transcript })
+      if (onTranscriptChange) {
+        onTranscriptChange(transcript)
+      }
+    } else if (isRecording) {
+      setStatusDisplay(null)
     }
-  }, [transcript])
+  }, [transcript, isRecording, onTranscriptChange])
 
   const handleMicClick = () => {
     if (isRecording) {
@@ -38,8 +44,12 @@ export function VoiceSidebar({ onTranscriptChange }: VoiceSidebarProps) {
 
 
   const handleTextKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter' && textInput.trim() && onTranscriptChange) {
-      onTranscriptChange(textInput.trim())
+    if (e.key === 'Enter' && textInput.trim()) {
+      const searchValue = textInput.trim()
+      setStatusDisplay({ type: 'search', value: searchValue })
+      if (onTranscriptChange) {
+        onTranscriptChange(searchValue)
+      }
       setTextInput('')
     }
   }
@@ -102,14 +112,26 @@ export function VoiceSidebar({ onTranscriptChange }: VoiceSidebarProps) {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        {(transcript || error || latency !== null) && (
+        {(statusDisplay || error || (latency !== null && statusDisplay?.type === 'transcript')) && (
           <SidebarGroup>
             <SidebarGroupLabel>Status</SidebarGroupLabel>
             <SidebarGroupContent className="px-2">
-              {transcript && (
-                <div className="p-3 bg-green-500/10 border border-green-500/40 rounded-md mb-2">
-                  <p className="text-xs font-medium text-green-600 mb-1">Transcript:</p>
-                  <p className="text-sm text-green-800">{transcript}</p>
+              {statusDisplay && (
+                <div className={`p-3 border rounded-md mb-2 ${
+                  statusDisplay.type === 'transcript'
+                    ? 'bg-green-500/10 border-green-500/40'
+                    : 'bg-blue-500/10 border-blue-500/40'
+                }`}>
+                  <p className={`text-xs font-medium mb-1 ${
+                    statusDisplay.type === 'transcript' ? 'text-green-600' : 'text-blue-600'
+                  }`}>
+                    {statusDisplay.type === 'transcript' ? 'Transcript:' : 'Search:'}
+                  </p>
+                  <p className={`text-sm ${
+                    statusDisplay.type === 'transcript' ? 'text-green-800' : 'text-blue-800'
+                  }`}>
+                    {statusDisplay.value}
+                  </p>
                 </div>
               )}
 
@@ -120,7 +142,7 @@ export function VoiceSidebar({ onTranscriptChange }: VoiceSidebarProps) {
                 </div>
               )}
 
-              {latency !== null && (
+              {latency !== null && statusDisplay?.type === 'transcript' && (
                 <div className="text-xs text-muted-foreground">
                   Latency: {Math.round(latency)}ms
                 </div>
