@@ -1,10 +1,16 @@
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { SidebarProvider, SidebarInset } from './ui/sidebar'
 import { VoiceSidebar } from './VoiceSidebar'
 import { CouponCard } from './CouponCard'
+import { ProductCard } from './ProductCard'
+import { ChristmasDecorations } from './ChristmasDecorations'
+import { ProductCardSkeleton, CouponCardSkeleton, NoResults } from './SkeletonLoader'
 import { Coupon } from '../types/coupon'
+import { Product } from '../types/product'
 import { useAuth } from '../hooks/useAuth'
 import { Button } from './ui/button'
+import { supabase } from '../lib/supabase'
+import { apiFetch } from '../lib/api'
 
 // Mock data - will be replaced with real data from backend
 const mockFrontstoreCoupons: Coupon[] = [
@@ -55,16 +61,206 @@ const mockCategoryBrandCoupons: Coupon[] = [
   },
 ]
 
+// Mock product data - will be replaced with real data from backend
+const mockProducts: Product[] = [
+  {
+    id: '1',
+    name: 'CVS Durable Nitrile Exam Gloves',
+    imageUrl: 'https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=400',
+    price: 15.79,
+    rating: 5,
+    reviewCount: 205,
+    category: 'Health',
+    inStock: true
+  },
+  {
+    id: '2',
+    name: 'CVS Extra Strength Acetaminophen Pain Reliever, 500 mg',
+    imageUrl: 'https://images.unsplash.com/photo-1587854692152-cbe660dbde88?w=400',
+    price: 10.49,
+    rating: 5,
+    reviewCount: 345,
+    category: 'Health',
+    inStock: true
+  },
+  {
+    id: '3',
+    name: "Nature's Bounty Magnesium Tablets 500mg",
+    imageUrl: 'https://images.unsplash.com/photo-1550572017-4340e44c1f6a?w=400',
+    price: 19.49,
+    rating: 5,
+    reviewCount: 162,
+    promoText: 'Buy 1, Get 1 Free',
+    category: 'Vitamins',
+    inStock: true
+  },
+  {
+    id: '4',
+    name: 'One+other Premium Cotton Rounds',
+    imageUrl: 'https://images.unsplash.com/photo-1556228720-195a672e8a03?w=400',
+    price: 4.19,
+    rating: 5,
+    reviewCount: 273,
+    promoText: 'Buy 2, Get 1 Free',
+    category: 'Beauty',
+    inStock: true
+  },
+]
+
 export function MainLayout() {
   const [transcript, setTranscript] = useState<string>('')
+  const [products, setProducts] = useState<Product[]>([])
+  const [frontstoreCoupons, setFrontstoreCoupons] = useState<Coupon[]>([])
+  const [categoryBrandCoupons, setCategoryBrandCoupons] = useState<Coupon[]>([])
+  const [hoveredProductId, setHoveredProductId] = useState<string | null>(null)
+  const [isLoadingProducts, setIsLoadingProducts] = useState(false)
+  const [isLoadingCoupons, setIsLoadingCoupons] = useState(false)
+  const [hasSearched, setHasSearched] = useState(false)
   const { user, signOut } = useAuth()
 
-  // This will be replaced with actual search logic when backend is connected
-  const handleTranscriptChange = (newTranscript: string) => {
+  const loadRecommendations = useCallback(async () => {
+    setIsLoadingProducts(true)
+
+    try {
+      // Get auth token
+      const { data: { session } } = await supabase.auth.getSession()
+
+      if (!session?.access_token) {
+        console.log('No session, showing default products')
+        setProducts(mockProducts.slice(0, 5)) // Show 5 mock products as fallback
+        return
+      }
+
+      // Fetch personalized recommendations
+      const response = await apiFetch('/api/products/recommendations?limit=5', {
+        method: 'GET'
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        console.log(`Loaded ${data.count} recommendations (personalized=${data.personalized})`)
+        const transformedProducts = data.products.map((p: any) => ({
+          id: p.id,
+          name: p.name,
+          description: p.description,
+          imageUrl: p.imageUrl,
+          price: p.price,
+          rating: p.rating,
+          reviewCount: p.reviewCount,
+          category: p.category,
+          brand: p.brand,
+          promoText: p.promoText,
+          inStock: p.inStock
+        }))
+        setProducts(transformedProducts)
+      } else {
+        // Fallback to mock data
+        console.log('Recommendations API failed, using mock data')
+        setProducts(mockProducts.slice(0, 5))
+      }
+    } catch (error) {
+      console.error('Failed to load recommendations:', error)
+      setProducts(mockProducts.slice(0, 5))
+    } finally {
+      setIsLoadingProducts(false)
+    }
+  }, []) // Empty dependency array - only create once
+
+  // Load personalized recommendations on startup (only once)
+  useEffect(() => {
+    loadRecommendations()
+  }, [loadRecommendations])
+
+  const handleTranscriptChange = useCallback(async (newTranscript: string) => {
     setTranscript(newTranscript)
-    console.log('Searching for:', newTranscript)
-    // TODO: Implement PostgreSQL search when backend is ready
-  }
+    setHasSearched(true)
+
+    // If transcript is empty, reset to recommendations
+    if (!newTranscript.trim()) {
+      loadRecommendations()
+      setFrontstoreCoupons([])
+      setCategoryBrandCoupons([])
+      setHasSearched(false)
+      return
+    }
+
+    // Get auth token
+    const { data: { session } } = await supabase.auth.getSession()
+
+    if (!session?.access_token) {
+      console.error('No authentication token available')
+      return
+    }
+
+    // Search products
+    setIsLoadingProducts(true)
+    try {
+      const productsResponse = await apiFetch('/api/products/search', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ query: newTranscript, limit: 50 })
+      })
+
+      if (productsResponse.ok) {
+        const productsData = await productsResponse.json()
+        const transformedProducts = productsData.products.map((p: any) => ({
+          id: p.id,
+          name: p.name,
+          description: p.description,
+          imageUrl: p.imageUrl,  // Backend already returns camelCase
+          price: p.price,
+          rating: p.rating,
+          reviewCount: p.reviewCount,  // Backend already returns camelCase
+          category: p.category,
+          brand: p.brand,
+          promoText: p.promoText,  // Backend already returns camelCase
+          inStock: p.inStock  // Backend already returns camelCase
+        }))
+        setProducts(transformedProducts)
+      }
+    } catch (error) {
+      console.error('Product search failed:', error)
+    } finally {
+      setIsLoadingProducts(false)
+    }
+
+    // Search coupons (user-specific only)
+    setIsLoadingCoupons(true)
+    try {
+      const couponsResponse = await apiFetch('/api/coupons/search', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ question: newTranscript })
+      })
+
+      if (couponsResponse.ok) {
+        const couponsData = await couponsResponse.json()
+        const transformedCoupons = couponsData.results.map((c: any) => ({
+          id: c.id,
+          type: c.type,
+          discountDetails: c.discount_details || c.discountDetails,  // Handle both formats
+          categoryOrBrand: c.category_or_brand || c.categoryOrBrand,
+          expirationDate: c.expiration_date || c.expirationDate,
+          terms: c.terms
+        }))
+
+        // Split by type
+        const frontstore = transformedCoupons.filter((c: Coupon) => c.type === 'frontstore')
+        const categoryBrand = transformedCoupons.filter((c: Coupon) => c.type !== 'frontstore')
+
+        setFrontstoreCoupons(frontstore)
+        setCategoryBrandCoupons(categoryBrand)
+      }
+    } catch (error) {
+      console.error('Coupon search failed:', error)
+    } finally {
+      setIsLoadingCoupons(false)
+    }
+  }, [loadRecommendations])
 
   const handleSignOut = async () => {
     await signOut()
@@ -72,14 +268,16 @@ export function MainLayout() {
 
   return (
     <SidebarProvider defaultOpen={true}>
-      <div className="flex w-full min-h-screen">
+      <div className="flex w-full min-h-screen relative">
+        <ChristmasDecorations />
         <VoiceSidebar onTranscriptChange={handleTranscriptChange} />
         <SidebarInset>
           <header className="sticky top-0 z-10 flex h-16 items-center justify-between gap-3 border-b border-border/50 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 px-6">
-            <div className="flex items-center gap-3">
-              <div className="w-2.5 h-2.5 rounded-full bg-[#CC0000] shadow-[0_0_10px_rgba(204,0,0,0.6)]"></div>
-              <h1 className="text-lg font-semibold tracking-tight">UM Retail Voice Offers</h1>
-            </div>
+            <h1 className="text-xl font-bold flex items-center gap-2">
+              <span className="festive-glow">❄️</span>
+              {transcript ? 'Recommended for you' : 'AI Powered Retail App'}
+              <span className="festive-glow">🎄</span>
+            </h1>
             <div className="flex items-center gap-4">
               {user && (
                 <>
@@ -92,11 +290,102 @@ export function MainLayout() {
             </div>
           </header>
           <main className="flex-1 p-6">
-            <div className="max-w-6xl mx-auto">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 px-4 sm:px-6 lg:px-8">
+            <div className="max-w-7xl mx-auto">
+              {/* Three-column grid */}
+              <div className="grid grid-cols-1 gap-6 px-4 sm:px-6 lg:px-8 lg:gap-16" style={{ gridTemplateColumns: 'repeat(1, minmax(0, 1fr))' }} data-lg-grid="true">
+                <style>{`
+                  @media (min-width: 1024px) {
+                    [data-lg-grid="true"] {
+                      grid-template-columns: 1.15fr 1fr 1fr !important;
+                    }
+                  }
+                `}</style>
+                
+                {/* LEFT COLUMN: Products */}
                 <div className="space-y-4">
                   <div className="mb-6">
-                    <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-1">
+                    <h2 className="text-2xl font-bold mb-1">
+                      Recommended for you
+                    </h2>
+                    <p className="text-xs text-muted-foreground">
+                      {transcript ? `Products matching "${transcript}"` : 'Popular products'}
+                    </p>
+                  </div>
+
+                  {isLoadingProducts ? (
+                    <div className="relative flex flex-col items-start">
+                      <div className="w-[72%] relative flex flex-col">
+                        {[...Array(5)].map((_, index) => (
+                          <div
+                            key={index}
+                            style={{
+                              marginTop: index === 0 ? '0' : '-4rem',
+                              zIndex: 10
+                            }}
+                          >
+                            <ProductCardSkeleton />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : products.length === 0 && hasSearched ? (
+                    <>
+                      <NoResults query={transcript} />
+                      <div className="relative flex flex-col items-start mt-8">
+                        <h3 className="text-lg font-semibold mb-4">Suggested Products</h3>
+                        <div className="w-[72%] relative flex flex-col">
+                          {mockProducts.slice(0, 5).map((product, index) => (
+                            <div
+                              key={product.id}
+                              className={`relative transition-all duration-300 ${
+                                hoveredProductId && hoveredProductId !== product.id
+                                  ? 'opacity-60'
+                                  : 'opacity-100'
+                              }`}
+                              style={{
+                                marginTop: index === 0 ? '0' : '-4rem',
+                                zIndex: hoveredProductId === product.id ? 50 : 10
+                              }}
+                              onMouseEnter={() => setHoveredProductId(product.id)}
+                              onMouseLeave={() => setHoveredProductId(null)}
+                            >
+                              <ProductCard product={product} />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="relative flex flex-col items-start">
+                      <div className="w-[72%] relative flex flex-col">
+                        {products.map((product, index) => (
+                          <div
+                            key={product.id}
+                            className={`relative transition-all duration-300 ${
+                              hoveredProductId && hoveredProductId !== product.id
+                                ? 'opacity-60'
+                                : 'opacity-100'
+                            }`}
+                            style={{
+                              marginTop: index === 0 ? '0' : '-4rem',
+                              zIndex: hoveredProductId === product.id ? 50 : 10
+                            }}
+                            onMouseEnter={() => setHoveredProductId(product.id)}
+                            onMouseLeave={() => setHoveredProductId(null)}
+                          >
+                            <ProductCard product={product} />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* MIDDLE COLUMN: Front-store Offers */}
+                <div className="space-y-4">
+                  <div className="mb-6">
+                    <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-1 flex items-center gap-2">
+                      <span className="text-red-500">🎁</span>
                       Front-store Offers
                     </h2>
                     <p className="text-xs text-muted-foreground">
@@ -104,14 +393,29 @@ export function MainLayout() {
                     </p>
                   </div>
                   <div className="space-y-4">
-                    {mockFrontstoreCoupons.map((coupon) => (
-                      <CouponCard key={coupon.id} coupon={coupon} />
-                    ))}
+                    {isLoadingCoupons ? (
+                      <>
+                        {[...Array(3)].map((_, index) => (
+                          <CouponCardSkeleton key={index} />
+                        ))}
+                      </>
+                    ) : frontstoreCoupons.length === 0 ? (
+                      <div className="text-sm text-muted-foreground text-center py-8">
+                        {hasSearched ? 'No frontstore coupons match your search' : 'No frontstore coupons available'}
+                      </div>
+                    ) : (
+                      frontstoreCoupons.map((coupon) => (
+                        <CouponCard key={coupon.id} coupon={coupon} />
+                      ))
+                    )}
                   </div>
                 </div>
+
+                {/* RIGHT COLUMN: Category & Brand Offers */}
                 <div className="space-y-4">
                   <div className="mb-6">
-                    <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-1">
+                    <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-1 flex items-center gap-2">
+                      <span className="text-green-600">✨</span>
                       Category & Brand Offers
                     </h2>
                     <p className="text-xs text-muted-foreground">
@@ -119,9 +423,21 @@ export function MainLayout() {
                     </p>
                   </div>
                   <div className="space-y-4">
-                    {mockCategoryBrandCoupons.map((coupon) => (
-                      <CouponCard key={coupon.id} coupon={coupon} />
-                    ))}
+                    {isLoadingCoupons ? (
+                      <>
+                        {[...Array(3)].map((_, index) => (
+                          <CouponCardSkeleton key={index} />
+                        ))}
+                      </>
+                    ) : categoryBrandCoupons.length === 0 ? (
+                      <div className="text-sm text-muted-foreground text-center py-8">
+                        {hasSearched ? 'No category/brand coupons match your search' : 'Use voice search to find relevant coupons'}
+                      </div>
+                    ) : (
+                      categoryBrandCoupons.map((coupon) => (
+                        <CouponCard key={coupon.id} coupon={coupon} />
+                      ))
+                    )}
                   </div>
                 </div>
               </div>

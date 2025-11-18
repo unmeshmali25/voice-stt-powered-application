@@ -12,6 +12,8 @@ VoiceOffers is a voice-activated search platform that helps retail customers dis
 - Supabase authentication and user management
 - Semantic coupon search with re-ranking
 - Real-time transcript display
+- **Product recommendations** with voice search
+- 3-column layout (Products | Front-store Offers | Category Offers)
 
 🚧 **In Progress:**
 - Multi-environment deployment (dev/staging/production)
@@ -113,35 +115,50 @@ npm run dev
 
 ```
 VoiceOffers/
-├── frontend/                 # React + TypeScript frontend
+├── frontend/                       # React + TypeScript frontend
 │   ├── src/
-│   │   ├── components/      # UI components
-│   │   ├── hooks/           # Custom React hooks (voice recording)
-│   │   ├── lib/             # Utilities (Supabase, API client)
-│   │   └── types/           # TypeScript interfaces
+│   │   ├── components/            # UI components
+│   │   │   ├── ProductCard.tsx    # NEW: Product display card
+│   │   │   └── CouponCard.tsx     # Coupon display card
+│   │   ├── hooks/                 # Custom React hooks (voice recording)
+│   │   ├── lib/                   # Utilities (Supabase, API client)
+│   │   └── types/                 # TypeScript interfaces
+│   │       ├── product.ts         # NEW: Product type definition
+│   │       └── coupon.ts          # Coupon type definition
 │   └── package.json
 │
-├── app/                      # FastAPI backend
-│   ├── main.py              # Main application & API endpoints
-│   └── supabase_client.py   # Supabase initialization
+├── app/                            # FastAPI backend
+│   ├── main.py                    # Main application & API endpoints
+│   ├── ingestion/                 # Data ingestion scripts
+│   │   ├── ingest_coupons.py     # Load coupons into DB
+│   │   └── ingest_products.py    # NEW: Load products into DB
+│   └── supabase_client.py         # Supabase initialization
 │
-├── migrations/               # Database schema & seed data
-│   ├── postgres_schema.sql  # Complete DB schema
-│   ├── seed_dev.sql         # Development test data
-│   └── seed_staging.sql     # Staging test data
+├── data/                           # Sample data files
+│   ├── coupons.json               # Sample coupon data
+│   └── products.json              # NEW: Sample product data
 │
-├── alembic/                  # Database migration tool
+├── migrations/                     # Database schema & seed data
+│   ├── postgres_schema.sql        # Complete DB schema (includes products table)
+│   ├── seed_dev.sql               # Development test data
+│   └── seed_staging.sql           # Staging test data
 │
-├── .github/workflows/        # CI/CD pipelines
-│   ├── pr-checks.yml        # Run on PRs
-│   ├── deploy-staging.yml   # Deploy to staging
-│   └── deploy-production.yml # Deploy to production
+├── alembic/                        # Database migration tool
 │
-├── .env.example              # Backend environment template
-├── vercel.json               # Vercel deployment config
-├── railway.json              # Railway deployment config
-├── requirements.txt          # Python dependencies
-└── README.md                 # This file
+├── .github/workflows/              # CI/CD pipelines
+│   ├── pr-checks.yml              # Run on PRs
+│   ├── deploy-staging.yml         # Deploy to staging
+│   └── deploy-production.yml      # Deploy to production
+│
+├── PRODUCT_FEATURE_SUMMARY.md      # NEW: Product feature quick reference
+├── PRODUCT_FEATURE_DEPLOYMENT.md   # NEW: Product feature deployment guide
+├── IMAGE_STORAGE_GUIDE.md          # NEW: Guide for managing product images
+├── DEPLOYMENT.md                   # Deployment guide
+├── .env.example                    # Backend environment template
+├── vercel.json                     # Vercel deployment config
+├── railway.json                    # Railway deployment config
+├── requirements.txt                # Python dependencies
+└── README.md                       # This file
 ```
 
 ---
@@ -259,6 +276,13 @@ VITE_API_URL=/api  # Uses Vite proxy in dev
   - Body: `{ question: "vitamin coupons" }`
   - Returns: `{ results: [...coupons] }`
 
+### Product Search
+
+- `POST /api/products/search` - Full-text product search (authenticated, rate limited: 30/min)
+  - Body: `{ query: "moisturizer", limit: 10 }`
+  - Returns: `{ products: [...products], count: 10 }`
+- `GET /api/products/search?query=moisturizer&limit=10` - Same as POST, but via query params
+
 ### Health Check
 
 - `GET /healthz` - Health check with database status
@@ -324,6 +348,33 @@ VITE_API_URL=/api  # Uses Vite proxy in dev
 - Ensure you have coupons assigned in the database
 - Run `migrations/seed_dev.sql` for test data
 
+### No products showing
+- Load sample products: `python app/ingestion/ingest_products.py`
+- Verify database: `SELECT COUNT(*) FROM products;`
+
+---
+
+## Product Recommendation Feature
+
+**NEW:** The platform now includes a product recommendation column that displays relevant products based on voice search queries.
+
+### Quick Start
+1. **Update Database**: Run `migrations/postgres_schema.sql` (adds `products` table)
+2. **Load Products**: `python app/ingestion/ingest_products.py`
+3. **Deploy**: Push changes to staging/production
+
+### Documentation
+- 📖 **[PRODUCT_FEATURE_SUMMARY.md](./PRODUCT_FEATURE_SUMMARY.md)** - Quick reference guide
+- 🚀 **[PRODUCT_FEATURE_DEPLOYMENT.md](./PRODUCT_FEATURE_DEPLOYMENT.md)** - Step-by-step deployment
+- 🖼️ **[IMAGE_STORAGE_GUIDE.md](./IMAGE_STORAGE_GUIDE.md)** - Managing product images
+
+### Features
+- 3-column layout (Products | Front-store Offers | Category Offers)
+- Full-text product search via `/api/products/search`
+- Product cards with images, prices, ratings, and promo text
+- Responsive design (mobile-friendly)
+- Supabase Storage integration for images
+
 ---
 
 ## License
@@ -334,7 +385,11 @@ MIT License - see [LICENSE](./LICENSE) for details
 
 ## Support
 
-- **Documentation**: [DEPLOYMENT.md](./DEPLOYMENT.md), [migrations/README.md](./migrations/README.md)
+- **Documentation**: 
+  - [DEPLOYMENT.md](./DEPLOYMENT.md) - Deployment guide
+  - [PRODUCT_FEATURE_DEPLOYMENT.md](./PRODUCT_FEATURE_DEPLOYMENT.md) - Product feature setup
+  - [IMAGE_STORAGE_GUIDE.md](./IMAGE_STORAGE_GUIDE.md) - Image management
+  - [migrations/README.md](./migrations/README.md) - Database migrations
 - **Issues**: [GitHub Issues](https://github.com/yourusername/VoiceOffers/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/yourusername/VoiceOffers/discussions)
 

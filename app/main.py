@@ -16,12 +16,13 @@ import time
 import json
 from pathlib import Path
 from typing import Dict, Any, List, Optional
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse, quote_plus, parse_qsl, urlencode
+import socket
 from functools import wraps
 
 import numpy as np
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request, HTTPException, status, UploadFile, File, Depends, Header
+from fastapi import FastAPI, Request, HTTPException, status, UploadFile, File, Depends, Header, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from starlette.staticfiles import StaticFiles
@@ -61,6 +62,57 @@ DATA_DIR = Path(os.getenv("DATA_DIR", "./data")).resolve()
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:dev@localhost:5432/voiceoffers")
 if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+# Robustly handle special characters in DB credentials by URL-encoding them
+try:
+    parsed_db_url = urlparse(DATABASE_URL)
+    # Only rebuild if we have a recognizable netloc and scheme
+    if parsed_db_url.scheme and parsed_db_url.netloc:
+        username = parsed_db_url.username or ""
+        password = parsed_db_url.password or ""
+        host = parsed_db_url.hostname or ""
+        port = parsed_db_url.port
+
+        # Encode username/password to safely handle characters like '@', ':', etc.
+        if username or password:
+            encoded_username = quote_plus(username)
+            encoded_password = quote_plus(password)
+            netloc = f"{encoded_username}:{encoded_password}@{host}"
+        else:
+            netloc = host
+
+        if port:
+            netloc += f":{port}"
+
+        # Ensure sslmode=require for hosted providers (e.g., Supabase)
+        query_params = dict(parse_qsl(parsed_db_url.query, keep_blank_values=True))
+        query_params.setdefault("sslmode", "require")
+
+        # Prefer IPv4 if available to avoid IPv6-only connectivity issues on some hosts
+        try:
+            if host not in {"localhost", "127.0.0.1"}:
+                addr_info_list = socket.getaddrinfo(host, port or 5432, socket.AF_INET, socket.SOCK_STREAM)
+                if addr_info_list:
+                    ipv4_addr = addr_info_list[0][4][0]
+                    # Provide hostaddr while keeping host for TLS/SNI
+                    query_params.setdefault("hostaddr", ipv4_addr)
+        except Exception:
+            # If DNS resolution fails, continue without hostaddr
+            pass
+
+        DATABASE_URL = urlunparse(
+            (
+                parsed_db_url.scheme,
+                netloc,
+                parsed_db_url.path,
+                parsed_db_url.params,
+                urlencode(query_params),
+                parsed_db_url.fragment,
+            )
+        )
+except Exception:
+    # If anything goes wrong, fall back to the original DATABASE_URL
+    pass
 
 FAISS_INDEX_PATH = Path(os.getenv("FAISS_INDEX_PATH", "./data/index/faiss.index")).resolve()
 FAISS_META_PATH = Path(os.getenv("FAISS_META_PATH", "./data/index/meta.json")).resolve()
@@ -119,11 +171,11 @@ def get_cors_origins():
             "http://127.0.0.1:3000"
         ]
     elif IS_STAGING:
-        # Staging: Allow Vercel preview URLs
+        # Staging: Allow Vercel preview URLs. Add base domain just in case.
         return [
             FRONTEND_URL,
+            "https://voice-stt-powered-application-staging.vercel.app",
             "https://voiceoffers-staging.vercel.app",
-            "https://*.vercel.app"  # Vercel preview deployments
         ]
     elif IS_PROD:
         # Production: Only allow production domain
@@ -145,7 +197,8 @@ cors_regex = None
 if IS_STAGING or IS_PROD:
     # Allow both preview deployments (voice-stt-powered-application-<id>.vercel.app)
     # and the root domain (voice-stt-powered-application.vercel.app), plus voiceoffers.* on vercel
-    cors_regex = r'https://(voice-stt-powered-application(-[a-z0-9]+)?|voiceoffers.*)\.vercel\.app'
+    # It also handles staging URLs by making '-staging' optional.
+    cors_regex = r'https://(voice-stt-powered-application(-staging)?(-[a-z0-9]+)?|voiceoffers.*)\.vercel\.app'
     logger.info(f"CORS regex pattern: {cors_regex}")
 
 app.add_middleware(
@@ -239,6 +292,108 @@ def verify_token(authorization: str = Header(None)) -> Dict[str, Any]:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Invalid or expired token: {str(e)}"
         )
+
+
+def assign_random_coupons_to_user(db: Session, user_id: str) -> int:
+    """
+    Assign random coupons to user's wallet:
+    - 2 frontstore coupons
+    - 30 category/brand coupons
+    - All expire in 14 days
+    
+    Returns: Number of coupons assigned
+    """
+    try:
+        # Check current active coupon counts by type
+        result = db.execute(
+            text("""
+                SELECT 
+                    c.type,
+                    COUNT(*) as count
+                FROM user_coupons uc
+                JOIN coupons c ON uc.coupon_id = c.id
+                WHERE uc.user_id = :user_id
+                  AND uc.eligible_until > NOW()
+                GROUP BY c.type
+            """),
+            {"user_id": user_id}
+        )
+        
+        current_counts = {row[0]: row[1] for row in result.fetchall()}
+        frontstore_count = current_counts.get('frontstore', 0)
+        category_brand_count = current_counts.get('category', 0) + current_counts.get('brand', 0)
+        
+        # Calculate how many coupons to assign
+        frontstore_needed = max(0, 2 - frontstore_count)
+        category_brand_needed = max(0, 30 - category_brand_count)
+        
+        total_assigned = 0
+        
+        # Assign frontstore coupons
+        if frontstore_needed > 0:
+            result = db.execute(
+                text("""
+                    SELECT id FROM coupons
+                    WHERE type = 'frontstore'
+                      AND expiration_date > NOW()
+                      AND id NOT IN (
+                          SELECT coupon_id FROM user_coupons WHERE user_id = :user_id
+                      )
+                    ORDER BY RANDOM()
+                    LIMIT :limit
+                """),
+                {"user_id": user_id, "limit": frontstore_needed}
+            )
+            
+            for row in result.fetchall():
+                db.execute(
+                    text("""
+                        INSERT INTO user_coupons (user_id, coupon_id, eligible_until)
+                        VALUES (:user_id, :coupon_id, NOW() + INTERVAL '14 days')
+                        ON CONFLICT (user_id, coupon_id) DO NOTHING
+                    """),
+                    {"user_id": user_id, "coupon_id": row[0]}
+                )
+                total_assigned += 1
+        
+        # Assign category/brand coupons
+        if category_brand_needed > 0:
+            result = db.execute(
+                text("""
+                    SELECT id FROM coupons
+                    WHERE type IN ('category', 'brand')
+                      AND expiration_date > NOW()
+                      AND id NOT IN (
+                          SELECT coupon_id FROM user_coupons WHERE user_id = :user_id
+                      )
+                    ORDER BY RANDOM()
+                    LIMIT :limit
+                """),
+                {"user_id": user_id, "limit": category_brand_needed}
+            )
+            
+            for row in result.fetchall():
+                db.execute(
+                    text("""
+                        INSERT INTO user_coupons (user_id, coupon_id, eligible_until)
+                        VALUES (:user_id, :coupon_id, NOW() + INTERVAL '14 days')
+                        ON CONFLICT (user_id, coupon_id) DO NOTHING
+                    """),
+                    {"user_id": user_id, "coupon_id": row[0]}
+                )
+                total_assigned += 1
+        
+        db.commit()
+        
+        if total_assigned > 0:
+            logger.info(f"Assigned {total_assigned} coupons to user {user_id} ({frontstore_needed} frontstore, {category_brand_needed} category/brand)")
+        
+        return total_assigned
+        
+    except Exception as e:
+        logger.error(f"Failed to assign coupons to user {user_id}: {e}")
+        db.rollback()
+        return 0
 
 
 # --- Routes ---
@@ -343,6 +498,7 @@ async def auth_me(
     """
     Get current user profile from database.
     Syncs user from Supabase if not exists in local DB.
+    Auto-assigns coupons to user's wallet if needed.
     """
     user_id = user["user_id"]
     email = user["email"]
@@ -384,6 +540,23 @@ async def auth_me(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to sync user profile"
             )
+
+    # Check if user needs coupon assignment (for new or existing users)
+    # Count active coupons (eligible_until > NOW())
+    result = db.execute(
+        text("""
+            SELECT COUNT(*) FROM user_coupons
+            WHERE user_id = :user_id
+              AND eligible_until > NOW()
+        """),
+        {"user_id": user_id}
+    )
+    active_coupon_count = result.scalar() or 0
+    
+    # Assign coupons if user has less than 32 active coupons
+    if active_coupon_count < 32:
+        logger.info(f"User {user_id} has {active_coupon_count} active coupons, assigning more")
+        assign_random_coupons_to_user(db, user_id)
 
     return JSONResponse({
         "id": str(user_row[0]),
@@ -624,9 +797,9 @@ async def coupon_search(
                 FROM coupons c
                 JOIN user_coupons uc ON c.id = uc.coupon_id
                 WHERE uc.user_id = :user_id
-                  AND (uc.eligible_until IS NULL OR uc.eligible_until > NOW())
+                  AND uc.eligible_until > NOW()
                   AND c.expiration_date > NOW()
-                  AND c.text_vector @@ websearch_to_tsquery('english', :query)
+                  AND (c.type = 'frontstore' OR c.text_vector @@ websearch_to_tsquery('english', :query))
                 ORDER BY ts_rank_cd(c.text_vector, websearch_to_tsquery('english', :query), 32) DESC
                 LIMIT :limit
             """),
@@ -649,9 +822,10 @@ async def coupon_search(
                     FROM coupons c
                     JOIN user_coupons uc ON c.id = uc.coupon_id
                     WHERE uc.user_id = :user_id
-                      AND (uc.eligible_until IS NULL OR uc.eligible_until > NOW())
+                      AND uc.eligible_until > NOW()
                       AND c.expiration_date > NOW()
-                      AND (c.discount_details ILIKE :pattern
+                      AND (c.type = 'frontstore'
+                           OR c.discount_details ILIKE :pattern
                            OR c.category_or_brand ILIKE :pattern
                            OR c.terms ILIKE :pattern)
                     LIMIT :limit
@@ -746,6 +920,300 @@ async def coupon_search(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Search failed: {str(e)}"
+        )
+
+
+# --- Product Search Endpoint ---
+
+@app.post("/api/products/search")
+@limiter.limit("30/minute")  # Rate limit: 30 searches per minute per IP
+async def product_search(
+    request: Request,
+    user: Dict[str, Any] = Depends(verify_token),
+    db: Session = Depends(get_db)
+) -> JSONResponse:
+    """
+    Search for products using full-text search.
+    
+    Returns: { "products": [{ id, name, description, imageUrl, price, rating, ... }], "count": int }
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    
+    query = (payload or {}).get("query", "")
+    limit = min(int(payload.get("limit", 10)), 50)  # Max 50 products
+    
+    if not isinstance(query, str) or not query.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing 'query' in request body"
+        )
+    
+    user_id = user["user_id"]
+    logger.info(f"User {user_id} searching products with query: '{query}'")
+    
+    # Clean query
+    search_query = query.strip()
+    
+    try:
+        # Full-text search on products
+        result = db.execute(
+            text("""
+                SELECT 
+                    id, name, description, image_url, price, 
+                    rating, review_count, category, brand, 
+                    promo_text, in_stock,
+                    ts_rank(text_vector, websearch_to_tsquery('english', :query)) as rank
+                FROM products
+                WHERE text_vector @@ websearch_to_tsquery('english', :query)
+                    AND in_stock = true
+                ORDER BY rank DESC, rating DESC NULLS LAST
+                LIMIT :limit
+            """),
+            {"query": search_query, "limit": limit}
+        )
+        rows = result.fetchall()
+        logger.info(f"Product search returned {len(rows)} results")
+        
+        if not rows:
+            # Fallback to ILIKE if no FTS results
+            logger.info("FTS returned no products. Falling back to ILIKE.")
+            result = db.execute(
+                text("""
+                    SELECT 
+                        id, name, description, image_url, price, 
+                        rating, review_count, category, brand, 
+                        promo_text, in_stock,
+                        0 as rank
+                    FROM products
+                    WHERE in_stock = true
+                        AND (name ILIKE :pattern
+                             OR description ILIKE :pattern
+                             OR category ILIKE :pattern
+                             OR brand ILIKE :pattern)
+                    ORDER BY rating DESC NULLS LAST, review_count DESC NULLS LAST
+                    LIMIT :limit
+                """),
+                {
+                    "pattern": f"%{search_query}%",
+                    "limit": limit
+                }
+            )
+            rows = result.fetchall()
+            logger.info(f"ILIKE search returned {len(rows)} products")
+        
+        # Build product list
+        products = []
+        for row in rows:
+            products.append({
+                "id": str(row[0]),
+                "name": row[1],
+                "description": row[2],
+                "imageUrl": row[3],
+                "price": float(row[4]) if row[4] else 0.0,
+                "rating": float(row[5]) if row[5] else None,
+                "reviewCount": row[6] if row[6] else 0,
+                "category": row[7],
+                "brand": row[8],
+                "promoText": row[9],
+                "inStock": row[10]
+            })
+        
+        return JSONResponse({
+            "products": products,
+            "count": len(products)
+        }, status_code=200)
+    
+    except Exception as e:
+        logger.exception(f"Product search failed for user {user_id}: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Product search failed: {str(e)}"
+        )
+
+
+@app.get("/api/products/search")
+@limiter.limit("30/minute")
+async def product_search_get(
+    request: Request,
+    query: str = Query(..., min_length=1),
+    limit: int = Query(10, ge=1, le=50),
+    user: Dict[str, Any] = Depends(verify_token),
+    db: Session = Depends(get_db)
+) -> JSONResponse:
+    """GET version of product search for easier testing"""
+    user_id = user["user_id"]
+    logger.info(f"User {user_id} searching products (GET) with query: '{query}'")
+    
+    search_query = query.strip()
+    
+    try:
+        # Full-text search on products
+        result = db.execute(
+            text("""
+                SELECT 
+                    id, name, description, image_url, price, 
+                    rating, review_count, category, brand, 
+                    promo_text, in_stock,
+                    ts_rank(text_vector, websearch_to_tsquery('english', :query)) as rank
+                FROM products
+                WHERE text_vector @@ websearch_to_tsquery('english', :query)
+                    AND in_stock = true
+                ORDER BY rank DESC, rating DESC NULLS LAST
+                LIMIT :limit
+            """),
+            {"query": search_query, "limit": limit}
+        )
+        rows = result.fetchall()
+        
+        if not rows:
+            # Fallback to ILIKE
+            result = db.execute(
+                text("""
+                    SELECT 
+                        id, name, description, image_url, price, 
+                        rating, review_count, category, brand, 
+                        promo_text, in_stock,
+                        0 as rank
+                    FROM products
+                    WHERE in_stock = true
+                        AND (name ILIKE :pattern
+                             OR description ILIKE :pattern
+                             OR category ILIKE :pattern
+                             OR brand ILIKE :pattern)
+                    ORDER BY rating DESC NULLS LAST, review_count DESC NULLS LAST
+                    LIMIT :limit
+                """),
+                {"pattern": f"%{search_query}%", "limit": limit}
+            )
+            rows = result.fetchall()
+        
+        products = []
+        for row in rows:
+            products.append({
+                "id": str(row[0]),
+                "name": row[1],
+                "description": row[2],
+                "imageUrl": row[3],
+                "price": float(row[4]) if row[4] else 0.0,
+                "rating": float(row[5]) if row[5] else None,
+                "reviewCount": row[6] if row[6] else 0,
+                "category": row[7],
+                "brand": row[8],
+                "promoText": row[9],
+                "inStock": row[10]
+            })
+        
+        return JSONResponse({"products": products, "count": len(products)}, status_code=200)
+    
+    except Exception as e:
+        logger.exception(f"Product search (GET) failed for user {user_id}: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Product search failed: {str(e)}"
+        )
+
+
+@app.get("/api/products/recommendations")
+@limiter.limit("60/minute")
+async def product_recommendations(
+    request: Request,
+    limit: int = Query(5, ge=1, le=20),
+    user: Dict[str, Any] = Depends(verify_token),
+    db: Session = Depends(get_db)
+) -> JSONResponse:
+    """
+    Get personalized product recommendations for user.
+
+    Logic:
+    1. Analyze user's search history and coupon usage
+    2. Find most frequent categories/brands
+    3. Return products matching user preferences
+    4. Fallback to top-rated products if no history
+
+    Returns: { "products": [...], "count": int, "personalized": bool }
+    """
+    user_id = user["user_id"]
+    logger.info(f"User {user_id} requesting {limit} product recommendations")
+
+    try:
+        # Try to get personalized recommendations based on user's coupon categories
+        result = db.execute(
+            text("""
+                WITH user_categories AS (
+                    SELECT DISTINCT c.category_or_brand as category
+                    FROM user_coupons uc
+                    JOIN coupons c ON uc.coupon_id = c.id
+                    WHERE uc.user_id = :user_id
+                        AND c.type IN ('category', 'brand')
+                        AND c.category_or_brand IS NOT NULL
+                    LIMIT 5
+                )
+                SELECT DISTINCT
+                    p.id, p.name, p.description, p.image_url, p.price,
+                    p.rating, p.review_count, p.category, p.brand,
+                    p.promo_text, p.in_stock
+                FROM products p
+                WHERE p.in_stock = true
+                    AND (p.category IN (SELECT category FROM user_categories)
+                         OR p.brand IN (SELECT category FROM user_categories))
+                ORDER BY p.rating DESC NULLS LAST, p.review_count DESC NULLS LAST
+                LIMIT :limit
+            """),
+            {"user_id": user_id, "limit": limit}
+        )
+        rows = result.fetchall()
+
+        personalized = len(rows) > 0
+
+        # If no personalized results, fallback to top-rated products
+        if not rows:
+            logger.info(f"No personalized recommendations for user {user_id}, using top-rated fallback")
+            result = db.execute(
+                text("""
+                    SELECT
+                        id, name, description, image_url, price,
+                        rating, review_count, category, brand,
+                        promo_text, in_stock
+                    FROM products
+                    WHERE in_stock = true
+                    ORDER BY rating DESC NULLS LAST, review_count DESC NULLS LAST
+                    LIMIT :limit
+                """),
+                {"limit": limit}
+            )
+            rows = result.fetchall()
+
+        products = []
+        for row in rows:
+            products.append({
+                "id": str(row[0]),
+                "name": row[1],
+                "description": row[2],
+                "imageUrl": row[3],
+                "price": float(row[4]) if row[4] else 0.0,
+                "rating": float(row[5]) if row[5] else None,
+                "reviewCount": row[6] if row[6] else 0,
+                "category": row[7],
+                "brand": row[8],
+                "promoText": row[9],
+                "inStock": row[10]
+            })
+
+        logger.info(f"Returning {len(products)} recommendations (personalized={personalized})")
+        return JSONResponse({
+            "products": products,
+            "count": len(products),
+            "personalized": personalized
+        }, status_code=200)
+
+    except Exception as e:
+        logger.exception(f"Recommendations failed for user {user_id}: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get recommendations: {str(e)}"
         )
 
 
