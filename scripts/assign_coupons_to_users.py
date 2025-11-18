@@ -13,7 +13,9 @@ Usage:
 
 import os
 import sys
+import socket
 from pathlib import Path
+from urllib.parse import urlparse, urlunparse, quote_plus, parse_qsl, urlencode
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
@@ -27,6 +29,59 @@ load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:dev@localhost:5432/voiceoffers")
 if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+# Robustly handle special characters in DB credentials by URL-encoding them
+try:
+    parsed_db_url = urlparse(DATABASE_URL)
+    # Only rebuild if we have a recognizable netloc and scheme
+    if parsed_db_url.scheme and parsed_db_url.netloc:
+        username = parsed_db_url.username or ""
+        password = parsed_db_url.password or ""
+        host = parsed_db_url.hostname or ""
+        port = parsed_db_url.port
+
+        # Encode username/password to safely handle characters like '@', ':', etc.
+        if username or password:
+            encoded_username = quote_plus(username)
+            encoded_password = quote_plus(password)
+            netloc = f"{encoded_username}:{encoded_password}@{host}"
+        else:
+            netloc = host
+
+        if port:
+            netloc += f":{port}"
+
+        # Ensure sslmode=require for hosted providers (e.g., Supabase)
+        # Only require SSL for non-localhost connections
+        query_params = dict(parse_qsl(parsed_db_url.query, keep_blank_values=True))
+        if host not in {"localhost", "127.0.0.1"}:
+            query_params.setdefault("sslmode", "require")
+
+        # Prefer IPv4 if available to avoid IPv6-only connectivity issues on some hosts
+        try:
+            if host not in {"localhost", "127.0.0.1"}:
+                addr_info_list = socket.getaddrinfo(host, port or 5432, socket.AF_INET, socket.SOCK_STREAM)
+                if addr_info_list:
+                    ipv4_addr = addr_info_list[0][4][0]
+                    # Provide hostaddr while keeping host for TLS/SNI
+                    query_params.setdefault("hostaddr", ipv4_addr)
+        except Exception:
+            # If DNS resolution fails, continue without hostaddr
+            pass
+
+        DATABASE_URL = urlunparse(
+            (
+                parsed_db_url.scheme,
+                netloc,
+                parsed_db_url.path,
+                parsed_db_url.params,
+                urlencode(query_params),
+                parsed_db_url.fragment,
+            )
+        )
+except Exception:
+    # If anything goes wrong, fall back to the original DATABASE_URL
+    pass
 
 # Database engine
 engine = create_engine(
@@ -143,6 +198,18 @@ def main():
     print("=" * 70)
     print()
     
+    # Check if DATABASE_URL is set (not using default localhost)
+    db_url = os.getenv("DATABASE_URL", "")
+    if not db_url or "localhost" in db_url or "127.0.0.1" in db_url:
+        print("⚠️  WARNING: DATABASE_URL not set or using localhost!")
+        print("   Please set DATABASE_URL environment variable to your staging database.")
+        print("   Example: export DATABASE_URL='postgresql://user:pass@host:5432/dbname'")
+        print()
+        response = input("Continue anyway? (y/N): ")
+        if response.lower() != 'y':
+            print("Aborted.")
+            return
+    
     session = SessionLocal()
     
     try:
@@ -153,8 +220,76 @@ def main():
         users = result.fetchall()
         
         if not users:
-            print("No users found in database.")
-            return
+            print("⚠️  No users found in local users table.")
+            print()
+            print("This might mean users exist in Supabase auth.users but haven't been synced yet.")
+            print("Would you like to sync users from auth.users first?")
+            print()
+            response = input("Sync users from auth.users? (Y/n): ")
+            
+            if response.lower() != 'n':
+                print()
+                print("Syncing users from auth.users...")
+                try:
+                    # Try to sync from auth.users
+                    auth_result = session.execute(
+                        text("""
+                            SELECT 
+                                id,
+                                email,
+                                raw_user_meta_data->>'full_name' as full_name,
+                                created_at
+                            FROM auth.users
+                            WHERE email IS NOT NULL
+                        """)
+                    )
+                    auth_users = auth_result.fetchall()
+                    
+                    if auth_users:
+                        synced = 0
+                        for user_id, email, full_name, created_at in auth_users:
+                            try:
+                                session.execute(
+                                    text("""
+                                        INSERT INTO users (id, email, full_name, created_at)
+                                        VALUES (:id, :email, :full_name, :created_at)
+                                        ON CONFLICT (id) DO UPDATE SET
+                                            email = EXCLUDED.email,
+                                            full_name = EXCLUDED.full_name,
+                                            updated_at = CURRENT_TIMESTAMP
+                                    """),
+                                    {
+                                        "id": user_id,
+                                        "email": email,
+                                        "full_name": full_name,
+                                        "created_at": created_at
+                                    }
+                                )
+                                synced += 1
+                                print(f"  ✓ Synced: {email}")
+                            except Exception as e:
+                                print(f"  ✗ Failed to sync {email}: {e}")
+                        
+                        session.commit()
+                        print(f"\n✅ Synced {synced} users from auth.users")
+                        print()
+                        
+                        # Re-fetch users after sync
+                        result = session.execute(
+                            text("SELECT id, email FROM users ORDER BY created_at")
+                        )
+                        users = result.fetchall()
+                    else:
+                        print("No users found in auth.users either.")
+                        return
+                except Exception as e:
+                    print(f"❌ Failed to sync from auth.users: {e}")
+                    print("   You may need to run: python scripts/sync_users_from_auth.py")
+                    return
+            else:
+                print("Aborted. Please sync users first or run:")
+                print("  python scripts/sync_users_from_auth.py")
+                return
         
         print(f"Found {len(users)} users in database")
         print()
