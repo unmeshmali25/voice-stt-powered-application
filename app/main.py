@@ -294,6 +294,108 @@ def verify_token(authorization: str = Header(None)) -> Dict[str, Any]:
         )
 
 
+def assign_random_coupons_to_user(db: Session, user_id: str) -> int:
+    """
+    Assign random coupons to user's wallet:
+    - 2 frontstore coupons
+    - 30 category/brand coupons
+    - All expire in 14 days
+    
+    Returns: Number of coupons assigned
+    """
+    try:
+        # Check current active coupon counts by type
+        result = db.execute(
+            text("""
+                SELECT 
+                    c.type,
+                    COUNT(*) as count
+                FROM user_coupons uc
+                JOIN coupons c ON uc.coupon_id = c.id
+                WHERE uc.user_id = :user_id
+                  AND uc.eligible_until > NOW()
+                GROUP BY c.type
+            """),
+            {"user_id": user_id}
+        )
+        
+        current_counts = {row[0]: row[1] for row in result.fetchall()}
+        frontstore_count = current_counts.get('frontstore', 0)
+        category_brand_count = current_counts.get('category', 0) + current_counts.get('brand', 0)
+        
+        # Calculate how many coupons to assign
+        frontstore_needed = max(0, 2 - frontstore_count)
+        category_brand_needed = max(0, 30 - category_brand_count)
+        
+        total_assigned = 0
+        
+        # Assign frontstore coupons
+        if frontstore_needed > 0:
+            result = db.execute(
+                text("""
+                    SELECT id FROM coupons
+                    WHERE type = 'frontstore'
+                      AND expiration_date > NOW()
+                      AND id NOT IN (
+                          SELECT coupon_id FROM user_coupons WHERE user_id = :user_id
+                      )
+                    ORDER BY RANDOM()
+                    LIMIT :limit
+                """),
+                {"user_id": user_id, "limit": frontstore_needed}
+            )
+            
+            for row in result.fetchall():
+                db.execute(
+                    text("""
+                        INSERT INTO user_coupons (user_id, coupon_id, eligible_until)
+                        VALUES (:user_id, :coupon_id, NOW() + INTERVAL '14 days')
+                        ON CONFLICT (user_id, coupon_id) DO NOTHING
+                    """),
+                    {"user_id": user_id, "coupon_id": row[0]}
+                )
+                total_assigned += 1
+        
+        # Assign category/brand coupons
+        if category_brand_needed > 0:
+            result = db.execute(
+                text("""
+                    SELECT id FROM coupons
+                    WHERE type IN ('category', 'brand')
+                      AND expiration_date > NOW()
+                      AND id NOT IN (
+                          SELECT coupon_id FROM user_coupons WHERE user_id = :user_id
+                      )
+                    ORDER BY RANDOM()
+                    LIMIT :limit
+                """),
+                {"user_id": user_id, "limit": category_brand_needed}
+            )
+            
+            for row in result.fetchall():
+                db.execute(
+                    text("""
+                        INSERT INTO user_coupons (user_id, coupon_id, eligible_until)
+                        VALUES (:user_id, :coupon_id, NOW() + INTERVAL '14 days')
+                        ON CONFLICT (user_id, coupon_id) DO NOTHING
+                    """),
+                    {"user_id": user_id, "coupon_id": row[0]}
+                )
+                total_assigned += 1
+        
+        db.commit()
+        
+        if total_assigned > 0:
+            logger.info(f"Assigned {total_assigned} coupons to user {user_id} ({frontstore_needed} frontstore, {category_brand_needed} category/brand)")
+        
+        return total_assigned
+        
+    except Exception as e:
+        logger.error(f"Failed to assign coupons to user {user_id}: {e}")
+        db.rollback()
+        return 0
+
+
 # --- Routes ---
 
 @app.get("/")
@@ -396,6 +498,7 @@ async def auth_me(
     """
     Get current user profile from database.
     Syncs user from Supabase if not exists in local DB.
+    Auto-assigns coupons to user's wallet if needed.
     """
     user_id = user["user_id"]
     email = user["email"]
@@ -437,6 +540,23 @@ async def auth_me(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to sync user profile"
             )
+
+    # Check if user needs coupon assignment (for new or existing users)
+    # Count active coupons (eligible_until > NOW())
+    result = db.execute(
+        text("""
+            SELECT COUNT(*) FROM user_coupons
+            WHERE user_id = :user_id
+              AND eligible_until > NOW()
+        """),
+        {"user_id": user_id}
+    )
+    active_coupon_count = result.scalar() or 0
+    
+    # Assign coupons if user has less than 32 active coupons
+    if active_coupon_count < 32:
+        logger.info(f"User {user_id} has {active_coupon_count} active coupons, assigning more")
+        assign_random_coupons_to_user(db, user_id)
 
     return JSONResponse({
         "id": str(user_row[0]),
@@ -677,7 +797,7 @@ async def coupon_search(
                 FROM coupons c
                 JOIN user_coupons uc ON c.id = uc.coupon_id
                 WHERE uc.user_id = :user_id
-                  AND (uc.eligible_until IS NULL OR uc.eligible_until > NOW())
+                  AND uc.eligible_until > NOW()
                   AND c.expiration_date > NOW()
                   AND c.text_vector @@ websearch_to_tsquery('english', :query)
                 ORDER BY ts_rank_cd(c.text_vector, websearch_to_tsquery('english', :query), 32) DESC
@@ -702,7 +822,7 @@ async def coupon_search(
                     FROM coupons c
                     JOIN user_coupons uc ON c.id = uc.coupon_id
                     WHERE uc.user_id = :user_id
-                      AND (uc.eligible_until IS NULL OR uc.eligible_until > NOW())
+                      AND uc.eligible_until > NOW()
                       AND c.expiration_date > NOW()
                       AND (c.discount_details ILIKE :pattern
                            OR c.category_or_brand ILIKE :pattern
