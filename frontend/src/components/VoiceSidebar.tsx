@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState } from 'react'
 import { Mic, MicOff, Camera } from 'lucide-react'
 import {
   Sidebar,
@@ -11,6 +11,7 @@ import {
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { Glass } from './ui/glass'
+import { Badge } from './ui/badge'
 import { useVoiceRecording } from '../hooks/useVoiceRecording'
 
 interface VoiceSidebarProps {
@@ -20,29 +21,12 @@ interface VoiceSidebarProps {
 export function VoiceSidebar({ onTranscriptChange }: VoiceSidebarProps) {
   const { isRecording, transcript, error, latency, startRecording, stopRecording } = useVoiceRecording()
   const [textInput, setTextInput] = useState('')
-  const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (transcript && onTranscriptChange) {
       onTranscriptChange(transcript)
     }
   }, [transcript])
-
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.code === 'Space' && !event.repeat) {
-        event.preventDefault()
-        if (isRecording) {
-          stopRecording()
-        } else {
-          startRecording()
-        }
-      }
-    }
-
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [isRecording, startRecording, stopRecording])
 
   const handleMicClick = () => {
     if (isRecording) {
@@ -52,21 +36,11 @@ export function VoiceSidebar({ onTranscriptChange }: VoiceSidebarProps) {
     }
   }
 
-  const handlePhotoClick = () => {
-    fileInputRef.current?.click()
-  }
-
-  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (file) {
-      // TODO: Implement photo upload/processing logic
-      console.log('Photo selected:', file.name)
-    }
-  }
 
   const handleTextKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' && textInput.trim() && onTranscriptChange) {
       onTranscriptChange(textInput.trim())
+      setTextInput('')
     }
   }
 
@@ -96,23 +70,21 @@ export function VoiceSidebar({ onTranscriptChange }: VoiceSidebarProps) {
               </Glass>
 
               {/* Photo Icon Component */}
-              <Glass className="w-full h-32 p-6 flex items-center justify-center">
+              <Glass className="w-full h-32 p-6 flex items-center justify-center relative">
                 <Button
-                  onClick={handlePhotoClick}
+                  disabled
                   size="lg"
-                  className="w-12 h-12 rounded-full text-2xl transition-all duration-300 bg-gradient-to-br from-sky-400 to-cyan-500 hover:from-sky-500 hover:to-cyan-600 hover:scale-105 shadow-[0_8px_24px_rgba(56,189,248,0.5)] hover:shadow-[0_12px_32px_rgba(56,189,248,0.7)]"
-                  aria-label="Upload photo"
+                  className="w-12 h-12 rounded-full text-2xl transition-all duration-300 bg-gradient-to-br from-sky-400/50 to-cyan-500/50 cursor-not-allowed opacity-60"
+                  aria-label="Upload photo - Coming Soon"
                 >
                   <Camera className="w-5 h-5" />
                 </Button>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  onChange={handlePhotoChange}
-                  className="hidden"
-                  aria-label="Upload photo"
-                />
+                <Badge
+                  variant="secondary"
+                  className="absolute top-2 right-2 text-xs bg-sky-100 text-sky-700 border-sky-300"
+                >
+                  Coming Soon
+                </Badge>
               </Glass>
 
               {/* Text Input Component */}
