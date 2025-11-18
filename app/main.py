@@ -799,7 +799,7 @@ async def coupon_search(
                 WHERE uc.user_id = :user_id
                   AND uc.eligible_until > NOW()
                   AND c.expiration_date > NOW()
-                  AND c.text_vector @@ websearch_to_tsquery('english', :query)
+                  AND (c.type = 'frontstore' OR c.text_vector @@ websearch_to_tsquery('english', :query))
                 ORDER BY ts_rank_cd(c.text_vector, websearch_to_tsquery('english', :query), 32) DESC
                 LIMIT :limit
             """),
@@ -824,7 +824,8 @@ async def coupon_search(
                     WHERE uc.user_id = :user_id
                       AND uc.eligible_until > NOW()
                       AND c.expiration_date > NOW()
-                      AND (c.discount_details ILIKE :pattern
+                      AND (c.type = 'frontstore'
+                           OR c.discount_details ILIKE :pattern
                            OR c.category_or_brand ILIKE :pattern
                            OR c.terms ILIKE :pattern)
                     LIMIT :limit
