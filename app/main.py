@@ -16,7 +16,8 @@ import time
 import json
 from pathlib import Path
 from typing import Dict, Any, List, Optional
-from urllib.parse import urlparse, urlunparse, quote_plus
+from urllib.parse import urlparse, urlunparse, quote_plus, parse_qsl, urlencode
+import socket
 from functools import wraps
 
 import numpy as np
@@ -83,14 +84,32 @@ try:
         if port:
             netloc += f":{port}"
 
-        DATABASE_URL = urlunparse((
-            parsed_db_url.scheme,
-            netloc,
-            parsed_db_url.path,
-            parsed_db_url.params,
-            parsed_db_url.query,
-            parsed_db_url.fragment
-        ))
+        # Ensure sslmode=require for hosted providers (e.g., Supabase)
+        query_params = dict(parse_qsl(parsed_db_url.query, keep_blank_values=True))
+        query_params.setdefault("sslmode", "require")
+
+        # Prefer IPv4 if available to avoid IPv6-only connectivity issues on some hosts
+        try:
+            if host not in {"localhost", "127.0.0.1"}:
+                addr_info_list = socket.getaddrinfo(host, port or 5432, socket.AF_INET, socket.SOCK_STREAM)
+                if addr_info_list:
+                    ipv4_addr = addr_info_list[0][4][0]
+                    # Provide hostaddr while keeping host for TLS/SNI
+                    query_params.setdefault("hostaddr", ipv4_addr)
+        except Exception:
+            # If DNS resolution fails, continue without hostaddr
+            pass
+
+        DATABASE_URL = urlunparse(
+            (
+                parsed_db_url.scheme,
+                netloc,
+                parsed_db_url.path,
+                parsed_db_url.params,
+                urlencode(query_params),
+                parsed_db_url.fragment,
+            )
+        )
 except Exception:
     # If anything goes wrong, fall back to the original DATABASE_URL
     pass
