@@ -16,7 +16,7 @@ import time
 import json
 from pathlib import Path
 from typing import Dict, Any, List, Optional
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse, quote_plus
 from functools import wraps
 
 import numpy as np
@@ -61,6 +61,39 @@ DATA_DIR = Path(os.getenv("DATA_DIR", "./data")).resolve()
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:dev@localhost:5432/voiceoffers")
 if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+# Robustly handle special characters in DB credentials by URL-encoding them
+try:
+    parsed_db_url = urlparse(DATABASE_URL)
+    # Only rebuild if we have a recognizable netloc and scheme
+    if parsed_db_url.scheme and parsed_db_url.netloc:
+        username = parsed_db_url.username or ""
+        password = parsed_db_url.password or ""
+        host = parsed_db_url.hostname or ""
+        port = parsed_db_url.port
+
+        # Encode username/password to safely handle characters like '@', ':', etc.
+        if username or password:
+            encoded_username = quote_plus(username)
+            encoded_password = quote_plus(password)
+            netloc = f"{encoded_username}:{encoded_password}@{host}"
+        else:
+            netloc = host
+
+        if port:
+            netloc += f":{port}"
+
+        DATABASE_URL = urlunparse((
+            parsed_db_url.scheme,
+            netloc,
+            parsed_db_url.path,
+            parsed_db_url.params,
+            parsed_db_url.query,
+            parsed_db_url.fragment
+        ))
+except Exception:
+    # If anything goes wrong, fall back to the original DATABASE_URL
+    pass
 
 FAISS_INDEX_PATH = Path(os.getenv("FAISS_INDEX_PATH", "./data/index/faiss.index")).resolve()
 FAISS_META_PATH = Path(os.getenv("FAISS_META_PATH", "./data/index/meta.json")).resolve()
