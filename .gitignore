@@ -275,11 +275,14 @@ aws_setup.md
 # Markdown documentation files
 *.md
 !README.md
-# Keep README.md but ignore all other markdown files
+!PRODUCTION_DEPLOYMENT_CHECKLIST.md
+# Keep README.md and deployment checklists but ignore all other markdown files
 
 # Deployment configuration files (Railway/Vercel read from repo, don't need in builds)
 alembic.ini
-alembic/
+alembic/*
+!alembic/versions/
+# Ignore alembic config but keep migration files in versions/
 check_env.py
 heroku_release.sh
 start_server.sh
