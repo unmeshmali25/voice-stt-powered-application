@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
-import { Mic, MicOff, Camera, Loader2 } from 'lucide-react'
+import { Mic, MicOff, Camera, Loader2, Video } from 'lucide-react'
 import {
   Sidebar,
   SidebarContent,
@@ -32,9 +32,10 @@ function DiscordIcon({ className }: { className?: string }) {
 
 interface VoiceSidebarProps {
   onTranscriptChange?: (transcript: string) => void
+  onARModeToggle?: () => void
 }
 
-export function VoiceSidebar({ onTranscriptChange }: VoiceSidebarProps) {
+export function VoiceSidebar({ onTranscriptChange, onARModeToggle }: VoiceSidebarProps) {
   const { isRecording, transcript, error, latency, startRecording, stopRecording } = useVoiceRecording()
   const [textInput, setTextInput] = useState('')
   const [statusDisplay, setStatusDisplay] = useState<{ type: 'transcript' | 'search', value: string } | null>(null)
@@ -192,6 +193,21 @@ export function VoiceSidebar({ onTranscriptChange }: VoiceSidebarProps) {
                   aria-label="Upload product image"
                 >
                   {isUploadingImage ? <Loader2 className="w-5 h-5 animate-spin" /> : <Camera className="w-5 h-5" />}
+                </Button>
+              </Glass>
+
+              {/* AR Camera Component */}
+              <Glass className="w-full h-32 p-6 flex items-center justify-center">
+                <Button
+                  onClick={onARModeToggle}
+                  size="lg"
+                  className="
+                    w-12 h-12 rounded-full text-2xl transition-all duration-300
+                    bg-gradient-to-br from-purple-500 to-indigo-600 hover:from-purple-600 hover:to-indigo-700 hover:scale-105 shadow-[0_8px_24px_rgba(139,92,246,0.4)]
+                  "
+                  aria-label="Start AR camera mode"
+                >
+                  <Video className="w-5 h-5" />
                 </Button>
               </Glass>
 

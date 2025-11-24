@@ -5,6 +5,7 @@ import { CouponCard } from './CouponCard'
 import { ProductCard } from './ProductCard'
 import { ChristmasDecorations } from './ChristmasDecorations'
 import { ProductCardSkeleton, CouponCardSkeleton, NoResults } from './SkeletonLoader'
+import { ARCameraView } from './ARCameraView'
 import { Coupon } from '../types/coupon'
 import { Product } from '../types/product'
 import { useAuth } from '../hooks/useAuth'
@@ -116,6 +117,7 @@ export function MainLayout() {
   const [isLoadingProducts, setIsLoadingProducts] = useState(false)
   const [isLoadingCoupons, setIsLoadingCoupons] = useState(false)
   const [hasSearched, setHasSearched] = useState(false)
+  const [isARMode, setIsARMode] = useState(false)
   const { user, signOut } = useAuth()
 
   const loadRecommendations = useCallback(async () => {
@@ -266,12 +268,64 @@ export function MainLayout() {
     await signOut()
   }
 
+  const toggleARMode = useCallback(() => {
+    setIsARMode(prev => !prev)
+  }, [])
+
+  const handleARSearch = useCallback(async (query: string): Promise<Coupon[]> => {
+    // Get auth token
+    const { data: { session } } = await supabase.auth.getSession()
+
+    if (!session?.access_token) {
+      console.error('No authentication token available')
+      return []
+    }
+
+    // Search coupons (user-specific only)
+    try {
+      const couponsResponse = await apiFetch('/api/coupons/search', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ question: query })
+      })
+
+      if (couponsResponse.ok) {
+        const couponsData = await couponsResponse.json()
+        const transformedCoupons = couponsData.results.map((c: any) => ({
+          id: c.id,
+          type: c.type,
+          discountDetails: c.discount_details || c.discountDetails,
+          categoryOrBrand: c.category_or_brand || c.categoryOrBrand,
+          expirationDate: c.expiration_date || c.expirationDate,
+          terms: c.terms
+        }))
+
+        return transformedCoupons
+      }
+    } catch (error) {
+      console.error('AR coupon search failed:', error)
+    }
+
+    return []
+  }, [])
+
   return (
     <SidebarProvider defaultOpen={true}>
       <div className="flex w-full min-h-screen relative">
         <ChristmasDecorations />
-        <VoiceSidebar onTranscriptChange={handleTranscriptChange} />
-        <SidebarInset>
+        <VoiceSidebar
+          onTranscriptChange={handleTranscriptChange}
+          onARModeToggle={toggleARMode}
+        />
+        {isARMode ? (
+          <ARCameraView
+            onExit={toggleARMode}
+            onSearchTrigger={handleARSearch}
+          />
+        ) : (
+          <SidebarInset>
           <header className="sticky top-0 z-10 flex h-16 items-center justify-between gap-3 border-b border-border/50 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 px-6">
             <h1 className="text-xl font-bold flex items-center gap-2">
               <span className="festive-glow">❄️</span>
@@ -444,6 +498,7 @@ export function MainLayout() {
             </div>
           </main>
         </SidebarInset>
+        )}
       </div>
     </SidebarProvider>
   )
