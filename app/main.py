@@ -1218,7 +1218,7 @@ async def product_recommendations(
 
 
 @app.post("/api/image-extract")
-@limiter.limit("10/minute")  # Rate limit: 10 requests per minute per IP
+@limiter.limit("30/minute")  # Rate limit: 30 requests per minute per IP (increased for AR mode)
 async def image_extract(
     request: Request,
     file: UploadFile = File(...),
