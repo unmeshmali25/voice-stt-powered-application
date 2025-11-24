@@ -58,6 +58,9 @@ export function VoiceSidebar({ onTranscriptChange }: VoiceSidebarProps) {
     if (isRecording) {
       stopRecording()
     } else {
+      // Clear image results when starting voice recording
+      setImageResult(null)
+      setImageError(null)
       startRecording()
     }
   }
@@ -66,6 +69,9 @@ export function VoiceSidebar({ onTranscriptChange }: VoiceSidebarProps) {
   const handleTextKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' && textInput.trim()) {
       const searchValue = textInput.trim()
+      // Clear image results when submitting text search
+      setImageResult(null)
+      setImageError(null)
       setStatusDisplay({ type: 'search', value: searchValue })
       if (onTranscriptChange) {
         onTranscriptChange(searchValue)
