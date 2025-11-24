@@ -26,7 +26,7 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
   const { isProcessing, captureFrame, clearResult } = useFrameCapture()
 
   const [coupons, setCoupons] = useState<Coupon[]>([])
-  const [isAutoScan, setIsAutoScan] = useState(true)
+  const [isAutoScan, setIsAutoScan] = useState(false)
   const [scanStatus, setScanStatus] = useState<string>('')
   const [detectedProducts, setDetectedProducts] = useState<Set<string>>(new Set())
   const [detectedProduct, setDetectedProduct] = useState<DetectedProductInfo | null>(null)
@@ -74,6 +74,7 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
       stopCamera()
       clearResult()
       setDetectedProduct(null)
+      setIsAutoScan(false)
     }
   }, [stopCamera, clearResult])
 
@@ -408,7 +409,17 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
               <Button
                 size="lg"
                 variant="outline"
-                onClick={() => setIsAutoScan(!isAutoScan)}
+                onClick={() => {
+                  if (!isAutoScan) {
+                    const confirmed = window.confirm(
+                      'Auto-scan captures frames every few seconds and may increase processing costs. Do you want to resume auto-scan?'
+                    )
+                    if (!confirmed) {
+                      return
+                    }
+                  }
+                  setIsAutoScan(prev => !prev)
+                }}
                 className="!border-white/50 !text-white hover:!bg-white/20 font-semibold"
                 style={{
                   borderColor: 'rgba(255, 255, 255, 0.5)',
@@ -428,6 +439,11 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
                   </>
                 )}
               </Button>
+              {!isAutoScan && (
+                <p className="text-xs text-gray-300 text-center w-full">
+                  Auto-scan is paused to save processing costs. Resume only when needed.
+                </p>
+              )}
 
               {/* Switch Camera (Mobile) */}
               <Button
