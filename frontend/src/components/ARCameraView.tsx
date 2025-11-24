@@ -28,7 +28,6 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
   const [coupons, setCoupons] = useState<Coupon[]>([])
   const [isAutoScan, setIsAutoScan] = useState(false)
   const [scanStatus, setScanStatus] = useState<string>('')
-  const [detectedProducts, setDetectedProducts] = useState<Set<string>>(new Set())
   const [detectedProduct, setDetectedProduct] = useState<DetectedProductInfo | null>(null)
   const statusResetTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
   const frontstoreCoupons = useMemo(
@@ -157,6 +156,8 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
       error: null
     })
 
+    setCoupons([])
+
     if (hasProductClues) {
       fetchDetectedProductName(result.brand ?? null, result.category ?? null)
     }
@@ -225,37 +226,23 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
       return
     }
 
-    let addedCount = 0
-    let addedFrontstore = false
-    let addedCategoryBrand = false
+    const hasFrontstore = aggregatedResults.some(c => c.type === 'frontstore')
+    const hasCategoryBrand = aggregatedResults.some(c => c.type !== 'frontstore')
 
-    setCoupons(prev => {
-      const existingIds = new Set(prev.map(c => c.id))
-      const uniqueNew = aggregatedResults.filter(c => !existingIds.has(c.id))
-      addedCount = uniqueNew.length
-      addedFrontstore = uniqueNew.some(c => c.type === 'frontstore')
-      addedCategoryBrand = uniqueNew.some(c => c.type !== 'frontstore')
-      if (!uniqueNew.length) return prev
-      return [...prev, ...uniqueNew]
-    })
-
-    if (result.brand || result.category) {
-      const productKey = `${result.brand || ''}_${result.category || ''}`
-      setDetectedProducts(prev => new Set(prev).add(productKey))
-    }
-
+    setCoupons(aggregatedResults)
     setDetectedProduct(prev => (prev ? { ...prev, loading: false } : prev))
 
-    if (addedCount === 0) {
-      updateScanStatus('Coupons already captured for this product')
-    } else {
-      const segments: string[] = []
-      if (addedFrontstore) segments.push('front-store')
-      if (addedCategoryBrand) segments.push('category/brand')
-      updateScanStatus(
-        `Found ${addedCount} ${segments.join(' & ')} coupon${addedCount > 1 ? 's' : ''}!`
-      )
-    }
+    const segmentSummary = [
+      hasFrontstore ? 'front-store' : null,
+      hasCategoryBrand ? 'category/brand' : null
+    ]
+      .filter(Boolean)
+      .join(' & ')
+
+    const segmentSuffix = segmentSummary ? ` ${segmentSummary}` : ''
+    const plural = aggregatedResults.length > 1 ? 's' : ''
+
+    updateScanStatus(`Found ${aggregatedResults.length}${segmentSuffix} coupon${plural}!`)
   }, [
     videoRef,
     isProcessing,
