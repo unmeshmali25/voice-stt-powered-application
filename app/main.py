@@ -1217,6 +1217,229 @@ async def product_recommendations(
         )
 
 
+@app.post("/api/image-extract")
+@limiter.limit("10/minute")  # Rate limit: 10 requests per minute per IP
+async def image_extract(
+    request: Request,
+    file: UploadFile = File(...),
+    user: Dict[str, Any] = Depends(verify_token)
+) -> JSONResponse:
+    """
+    Image-based brand and category extraction using OpenAI Vision API (authenticated).
+    - Accepts image upload (JPEG, PNG, WebP)
+    - Extracts brand name, category, and confidence level
+    - Returns: { "brand": "...", "category": "...", "confidence": "high|medium|low", "searchQuery": "..." }
+    """
+    t0 = time.time()
+    user_id = user["user_id"]
+
+    # Validate API key
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="OPENAI_API_KEY not configured"
+        )
+
+    # Validate file
+    if not file:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No image file provided"
+        )
+
+    # Validate MIME type
+    allowed_mimes = ["image/jpeg", "image/jpg", "image/png", "image/webp"]
+    content_type = file.content_type or ""
+
+    if content_type not in allowed_mimes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid image type. Allowed: {', '.join(allowed_mimes)}"
+        )
+
+    logger.info(f"User {user_id} uploaded image: {file.filename}, content_type: {content_type}")
+
+    # Read file content
+    try:
+        image_bytes = await file.read()
+    except Exception as e:
+        logger.exception("Failed to read uploaded image: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Failed to read image file"
+        )
+
+    # Validate file size (max 5MB for images)
+    max_size_mb = 5
+    if len(image_bytes) > max_size_mb * 1024 * 1024:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"Image file too large. Max {max_size_mb}MB allowed."
+        )
+
+    if len(image_bytes) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Image file is empty"
+        )
+
+    # Convert image to base64 for OpenAI Vision API
+    try:
+        import base64
+        base64_image = base64.b64encode(image_bytes).decode('utf-8')
+
+        # Determine image format
+        image_format = "jpeg"
+        if content_type == "image/png":
+            image_format = "png"
+        elif content_type == "image/webp":
+            image_format = "webp"
+
+        data_url = f"data:{content_type};base64,{base64_image}"
+
+    except Exception as e:
+        logger.exception("Failed to encode image: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to process image"
+        )
+
+    # Call OpenAI Vision API
+    try:
+        logger.info(f"Initializing OpenAI client for image analysis (user {user_id})")
+        client = OpenAI(
+            api_key=api_key,
+            default_headers={
+                "X-Environment": ENV,
+                "X-User-Agent": f"VoiceOffers/{app.version}/{ENV}"
+            }
+        )
+
+        t_api_start = time.time()
+        logger.info(f"Calling OpenAI Vision API for user {user_id}")
+
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": """Analyze this product image and extract information. Return ONLY valid JSON in this exact format:
+{
+  "brand": "Brand Name" or null,
+  "category": "Product Category" or null,
+  "confidence": "high" or "medium" or "low"
+}
+
+Guidelines:
+- brand: Extract visible brand name/logo (e.g., "Neutrogena", "Dove", "Colgate")
+- category: Identify product category (e.g., "skincare", "vitamins", "beverages", "snacks", "personal care")
+- confidence:
+  * "high" if brand and category are clearly visible
+  * "medium" if only one is clear or both are somewhat visible
+  * "low" if image is unclear or no product visible
+
+Return ONLY the JSON object, no additional text."""
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": data_url
+                            }
+                        }
+                    ]
+                }
+            ],
+            max_tokens=200,
+            temperature=0.1
+        )
+
+        t_api_end = time.time()
+
+        # Extract response
+        raw_content = response.choices[0].message.content.strip()
+        logger.info(f"OpenAI Vision raw response: {raw_content}")
+
+        # Parse JSON response
+        try:
+            # Try to extract JSON from response (in case there's extra text)
+            import re
+            json_match = re.search(r'\{[^}]+\}', raw_content, re.DOTALL)
+            if json_match:
+                parsed = json.loads(json_match.group(0))
+            else:
+                parsed = json.loads(raw_content)
+
+            brand = parsed.get("brand")
+            category = parsed.get("category")
+            confidence = parsed.get("confidence", "low")
+
+            # Validate confidence value
+            if confidence not in ["high", "medium", "low"]:
+                confidence = "low"
+
+            # Create search query
+            search_parts = []
+            if brand:
+                search_parts.append(str(brand))
+            if category:
+                search_parts.append(str(category))
+
+            search_query = " ".join(search_parts) if search_parts else ""
+
+            logger.info(f"Extracted: brand={brand}, category={category}, confidence={confidence}, query={search_query}")
+
+        except (json.JSONDecodeError, KeyError, AttributeError) as parse_error:
+            logger.warning(f"Failed to parse Vision API response: {parse_error}. Raw: {raw_content}")
+            # Return low confidence result
+            brand = None
+            category = None
+            confidence = "low"
+            search_query = ""
+
+        t_total = time.time() - t0
+        api_duration_ms = int((t_api_end - t_api_start) * 1000)
+        total_duration_ms = int(t_total * 1000)
+
+        if ENABLE_TIMING_LOGS:
+            logger.info(f"Image extraction completed for user {user_id}: {total_duration_ms}ms total (API: {api_duration_ms}ms)")
+
+        return JSONResponse({
+            "brand": brand,
+            "category": category,
+            "confidence": confidence,
+            "searchQuery": search_query,
+            "duration_ms": total_duration_ms,
+            "api_duration_ms": api_duration_ms
+        }, status_code=200)
+
+    except Exception as e:
+        logger.exception("OpenAI Vision API error: %s", e)
+
+        error_msg = str(e)
+        error_type = type(e).__name__
+
+        # Check for specific OpenAI API errors
+        if "insufficient_quota" in error_msg.lower() or "quota" in error_msg.lower():
+            detail = f"OpenAI quota exceeded. Error: {error_msg}"
+        elif "rate_limit" in error_msg.lower():
+            detail = f"Rate limit exceeded. Please try again later. Error: {error_msg}"
+        elif "invalid_api_key" in error_msg.lower() or "authentication" in error_msg.lower() or "401" in error_msg:
+            detail = f"Invalid OpenAI API key. Error: {error_msg}"
+        elif "timeout" in error_msg.lower():
+            detail = f"Request timeout. Please try with smaller image. Error: {error_msg}"
+        else:
+            detail = f"Image extraction failed ({error_type}): {error_msg}"
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=detail
+        )
+
+
 if __name__ == "__main__":
     try:
         import uvicorn

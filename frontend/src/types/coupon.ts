@@ -6,3 +6,10 @@ export interface Coupon {
   expirationDate: string
   terms?: string
 }
+
+export interface ImageExtractionResult {
+  brand: string | null
+  category: string | null
+  confidence: 'high' | 'medium' | 'low'
+  searchQuery: string
+}

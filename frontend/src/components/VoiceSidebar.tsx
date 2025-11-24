@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Mic, MicOff, Camera } from 'lucide-react'
+import { useEffect, useState, useRef } from 'react'
+import { Mic, MicOff, Camera, Loader2 } from 'lucide-react'
 import {
   Sidebar,
   SidebarContent,
@@ -13,6 +13,8 @@ import { Input } from './ui/input'
 import { Glass } from './ui/glass'
 import { Badge } from './ui/badge'
 import { useVoiceRecording } from '../hooks/useVoiceRecording'
+import { ImageExtractionResult } from '../types/coupon'
+import { apiFetch } from '../lib/api'
 
 // Discord icon component
 function DiscordIcon({ className }: { className?: string }) {
@@ -36,6 +38,10 @@ export function VoiceSidebar({ onTranscriptChange }: VoiceSidebarProps) {
   const { isRecording, transcript, error, latency, startRecording, stopRecording } = useVoiceRecording()
   const [textInput, setTextInput] = useState('')
   const [statusDisplay, setStatusDisplay] = useState<{ type: 'transcript' | 'search', value: string } | null>(null)
+  const [isUploadingImage, setIsUploadingImage] = useState(false)
+  const [imageResult, setImageResult] = useState<ImageExtractionResult | null>(null)
+  const [imageError, setImageError] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (transcript) {
@@ -52,6 +58,9 @@ export function VoiceSidebar({ onTranscriptChange }: VoiceSidebarProps) {
     if (isRecording) {
       stopRecording()
     } else {
+      // Clear image results when starting voice recording
+      setImageResult(null)
+      setImageError(null)
       startRecording()
     }
   }
@@ -60,11 +69,77 @@ export function VoiceSidebar({ onTranscriptChange }: VoiceSidebarProps) {
   const handleTextKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' && textInput.trim()) {
       const searchValue = textInput.trim()
+      // Clear image results when submitting text search
+      setImageResult(null)
+      setImageError(null)
       setStatusDisplay({ type: 'search', value: searchValue })
       if (onTranscriptChange) {
         onTranscriptChange(searchValue)
       }
       setTextInput('')
+    }
+  }
+
+  const handleCameraClick = () => {
+    // Trigger file input
+    fileInputRef.current?.click()
+  }
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    // Validate file type
+    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp']
+    if (!allowedTypes.includes(file.type)) {
+      setImageError('Please upload a JPEG, PNG, or WebP image')
+      return
+    }
+
+    // Validate file size (max 5MB)
+    const maxSizeMB = 5
+    if (file.size > maxSizeMB * 1024 * 1024) {
+      setImageError(`Image too large. Maximum size is ${maxSizeMB}MB`)
+      return
+    }
+
+    setIsUploadingImage(true)
+    setImageError(null)
+    setImageResult(null)
+
+    try {
+      // Create FormData
+      const formData = new FormData()
+      formData.append('file', file)
+
+      // Call API
+      const response = await apiFetch('/api/image-extract', {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Failed to extract image data' }))
+        throw new Error(errorData.detail || 'Image extraction failed')
+      }
+
+      const result: ImageExtractionResult = await response.json()
+      setImageResult(result)
+
+      // Trigger search if we have a query
+      if (result.searchQuery && onTranscriptChange) {
+        onTranscriptChange(result.searchQuery)
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to process image'
+      setImageError(errorMessage)
+      console.error('Image upload error:', err)
+    } finally {
+      setIsUploadingImage(false)
+      // Reset file input
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ''
+      }
     }
   }
 
@@ -95,20 +170,29 @@ export function VoiceSidebar({ onTranscriptChange }: VoiceSidebarProps) {
 
               {/* Photo Icon Component */}
               <Glass className="w-full h-32 p-6 flex items-center justify-center relative">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/jpeg,image/jpg,image/png,image/webp"
+                  onChange={handleImageUpload}
+                  className="hidden"
+                  aria-label="Upload product image"
+                />
                 <Button
-                  disabled
+                  onClick={handleCameraClick}
+                  disabled={isUploadingImage}
                   size="lg"
-                  className="w-12 h-12 rounded-full text-2xl transition-all duration-300 bg-gradient-to-br from-sky-400/50 to-cyan-500/50 cursor-not-allowed opacity-60"
-                  aria-label="Upload photo - Coming Soon"
+                  className={`
+                    w-12 h-12 rounded-full text-2xl transition-all duration-300
+                    ${isUploadingImage
+                      ? 'bg-sky-400/50 cursor-wait'
+                      : 'bg-gradient-to-br from-sky-400 to-cyan-500 hover:from-sky-500 hover:to-cyan-600 hover:scale-105 shadow-[0_8px_24px_rgba(56,189,248,0.4)]'
+                    }
+                  `}
+                  aria-label="Upload product image"
                 >
-                  <Camera className="w-5 h-5" />
+                  {isUploadingImage ? <Loader2 className="w-5 h-5 animate-spin" /> : <Camera className="w-5 h-5" />}
                 </Button>
-                <Badge
-                  variant="secondary"
-                  className="absolute top-2 right-2 text-xs bg-sky-100 text-sky-700 border-sky-300"
-                >
-                  Coming Soon
-                </Badge>
               </Glass>
 
               {/* Text Input Component */}
@@ -126,7 +210,7 @@ export function VoiceSidebar({ onTranscriptChange }: VoiceSidebarProps) {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        {(statusDisplay || error || (latency !== null && statusDisplay?.type === 'transcript')) && (
+        {(statusDisplay || error || imageResult || imageError || (latency !== null && statusDisplay?.type === 'transcript')) && (
           <SidebarGroup>
             <SidebarGroupLabel>Status</SidebarGroupLabel>
             <SidebarGroupContent className="px-2">
@@ -149,10 +233,54 @@ export function VoiceSidebar({ onTranscriptChange }: VoiceSidebarProps) {
                 </div>
               )}
 
+              {imageResult && (
+                <div className="p-3 border rounded-md mb-2 bg-sky-500/10 border-sky-500/40">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-xs font-medium text-sky-600">Image Analysis:</p>
+                    <Badge
+                      variant="secondary"
+                      className={`text-xs ${
+                        imageResult.confidence === 'high'
+                          ? 'bg-green-100 text-green-700 border-green-300'
+                          : imageResult.confidence === 'medium'
+                          ? 'bg-yellow-100 text-yellow-700 border-yellow-300'
+                          : 'bg-orange-100 text-orange-700 border-orange-300'
+                      }`}
+                    >
+                      {imageResult.confidence === 'high' ? '⚫ High' : imageResult.confidence === 'medium' ? '🟡 Medium' : '🟠 Low'} Confidence
+                    </Badge>
+                  </div>
+                  <div className="space-y-1">
+                    {imageResult.brand && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-medium text-sky-700">Brand:</span>
+                        <span className="text-sm text-sky-800">{imageResult.brand}</span>
+                      </div>
+                    )}
+                    {imageResult.category && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-medium text-sky-700">Category:</span>
+                        <span className="text-sm text-sky-800">{imageResult.category}</span>
+                      </div>
+                    )}
+                    {!imageResult.brand && !imageResult.category && (
+                      <p className="text-sm text-sky-700 italic">No brand or category detected</p>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {error && (
                 <div className="p-3 bg-red-50 border border-red-200 rounded-md mb-2">
                   <p className="text-xs font-medium text-red-900 mb-1">Error:</p>
                   <p className="text-sm text-red-800">{error}</p>
+                </div>
+              )}
+
+              {imageError && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-md mb-2">
+                  <p className="text-xs font-medium text-red-900 mb-1">Image Error:</p>
+                  <p className="text-sm text-red-800">{imageError}</p>
                 </div>
               )}
 
