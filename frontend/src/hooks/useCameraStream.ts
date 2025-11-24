@@ -21,6 +21,7 @@ export function useCameraStream(): UseCameraStreamReturn {
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
+  const isStartingRef = useRef(false)
 
   const stopCamera = useCallback(() => {
     if (streamRef.current) {
@@ -35,15 +36,18 @@ export function useCameraStream(): UseCameraStreamReturn {
       videoRef.current.srcObject = null
     }
 
+    isStartingRef.current = false
     setIsActive(false)
     console.log('Camera stopped')
   }, [])
 
   const startCamera = useCallback(async () => {
-    if (isActive) {
-      console.log('Camera already active')
+    if (streamRef.current || isStartingRef.current) {
+      console.log('Camera already active or starting')
       return
     }
+
+    isStartingRef.current = true
 
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       const errorMsg = 'Camera not available in this browser'
@@ -111,8 +115,10 @@ export function useCameraStream(): UseCameraStreamReturn {
       }
 
       console.error('Error starting camera:', err)
+    } finally {
+      isStartingRef.current = false
     }
-  }, [isActive, facingMode])
+  }, [facingMode])
 
   const switchCamera = useCallback(async () => {
     if (!isActive) return

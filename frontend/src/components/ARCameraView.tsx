@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useCameraStream } from '@/hooks/useCameraStream'
 import { useFrameCapture } from '@/hooks/useFrameCapture'
 import { CouponCard } from './CouponCard'
@@ -19,27 +19,62 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
   const [isAutoScan, setIsAutoScan] = useState(true)
   const [scanStatus, setScanStatus] = useState<string>('')
   const [detectedProducts, setDetectedProducts] = useState<Set<string>>(new Set())
+  const statusResetTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Start camera on mount
+  const updateScanStatus = useCallback((status: string, duration = 2000) => {
+    if (statusResetTimeout.current) {
+      clearTimeout(statusResetTimeout.current)
+      statusResetTimeout.current = null
+    }
+
+    setScanStatus(status)
+
+    if (duration > 0) {
+      statusResetTimeout.current = setTimeout(() => {
+        setScanStatus('')
+        statusResetTimeout.current = null
+      }, duration)
+    }
+  }, [])
+
+  // Keep a stable ref to the latest startCamera
+  const startCameraRef = useRef(startCamera)
   useEffect(() => {
-    startCamera()
+    startCameraRef.current = startCamera
+  }, [startCamera])
+
+  // Start camera on mount and clean up on unmount
+  useEffect(() => {
+    startCameraRef.current()
 
     return () => {
+      if (statusResetTimeout.current) {
+        clearTimeout(statusResetTimeout.current)
+        statusResetTimeout.current = null
+      }
       stopCamera()
       clearResult()
     }
-  }, [startCamera, stopCamera, clearResult])
+  }, [stopCamera, clearResult])
 
   // Manual frame capture handler
   const handleManualCapture = useCallback(async () => {
     if (!videoRef.current || isProcessing) return
 
-    setScanStatus('Capturing frame...')
+    updateScanStatus('Capturing frame...', 0)
 
-    const result = await captureFrame(videoRef.current)
+    let result
+    try {
+      result = await captureFrame(videoRef.current)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Frame capture failed'
+      console.error('Capture error:', error)
+      updateScanStatus(`Scan failed: ${message}`)
+      return
+    }
 
     if (result && result.searchQuery) {
-      setScanStatus('Searching for coupons...')
+      updateScanStatus('Searching for coupons...', 0)
 
       try {
         const foundCoupons = await onSearchTrigger(result.searchQuery)
@@ -58,22 +93,19 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
             setDetectedProducts(prev => new Set(prev).add(productKey))
           }
 
-          setScanStatus(`Found ${foundCoupons.length} new coupons!`)
+          updateScanStatus(`Found ${foundCoupons.length} new coupon${foundCoupons.length > 1 ? 's' : ''}!`)
         } else {
-          setScanStatus('No coupons found for this product')
+          updateScanStatus('No coupons found for this product')
         }
       } catch (error) {
+        const message = error instanceof Error ? error.message : 'Search failed'
         console.error('Search error:', error)
-        setScanStatus('Search failed')
+        updateScanStatus(`Search failed: ${message}`)
       }
-
-      // Clear status after 2 seconds
-      setTimeout(() => setScanStatus(''), 2000)
     } else {
-      setScanStatus('No product detected')
-      setTimeout(() => setScanStatus(''), 2000)
+      updateScanStatus('No product detected')
     }
-  }, [videoRef, isProcessing, captureFrame, onSearchTrigger])
+  }, [videoRef, isProcessing, captureFrame, onSearchTrigger, updateScanStatus])
 
   // Auto-scan with interval
   useEffect(() => {
@@ -109,6 +141,7 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
           {/* Video Element */}
           <video
             ref={videoRef}
+            autoPlay
             playsInline
             muted
             className="w-full h-full object-cover bg-black"

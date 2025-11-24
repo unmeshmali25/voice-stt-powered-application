@@ -122,8 +122,7 @@ export function useFrameCapture(): UseFrameCaptureReturn {
       const errorMessage = err instanceof Error ? err.message : String(err)
       setError(errorMessage)
       console.error('Frame capture error:', errorMessage)
-      return null
-
+      throw new Error(errorMessage)
     } finally {
       setIsProcessing(false)
     }
