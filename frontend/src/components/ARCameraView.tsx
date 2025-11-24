@@ -1,25 +1,44 @@
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useCameraStream } from '@/hooks/useCameraStream'
 import { useFrameCapture } from '@/hooks/useFrameCapture'
 import { CouponCard } from './CouponCard'
 import { Button } from './ui/button'
 import { X, Camera, Pause, Play, Repeat } from 'lucide-react'
 import { Coupon } from '@/types/coupon'
+import { apiFetch } from '@/lib/api'
 
 interface ARCameraViewProps {
   onExit: () => void
   onSearchTrigger: (query: string) => Promise<Coupon[]>
 }
 
+type DetectedProductInfo = {
+  brand: string | null
+  category: string | null
+  confidence: string | null
+  name: string | null
+  loading: boolean
+  error: string | null
+}
+
 export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
   const { videoRef, isActive, error: cameraError, startCamera, stopCamera, switchCamera } = useCameraStream()
-  const { isProcessing, lastResult, captureFrame, clearResult } = useFrameCapture()
+  const { isProcessing, captureFrame, clearResult } = useFrameCapture()
 
   const [coupons, setCoupons] = useState<Coupon[]>([])
   const [isAutoScan, setIsAutoScan] = useState(true)
   const [scanStatus, setScanStatus] = useState<string>('')
   const [detectedProducts, setDetectedProducts] = useState<Set<string>>(new Set())
+  const [detectedProduct, setDetectedProduct] = useState<DetectedProductInfo | null>(null)
   const statusResetTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const frontstoreCoupons = useMemo(
+    () => coupons.filter(coupon => coupon.type === 'frontstore'),
+    [coupons]
+  )
+  const categoryBrandCoupons = useMemo(
+    () => coupons.filter(coupon => coupon.type !== 'frontstore'),
+    [coupons]
+  )
 
   const updateScanStatus = useCallback((status: string, duration = 2000) => {
     if (statusResetTimeout.current) {
@@ -54,8 +73,55 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
       }
       stopCamera()
       clearResult()
+      setDetectedProduct(null)
     }
   }, [stopCamera, clearResult])
+
+  const fetchDetectedProductName = useCallback(async (brand: string | null, category: string | null) => {
+    const queryParts = [brand, category]
+      .filter((part): part is string => !!part && part.trim().length > 0)
+      .map(part => part.trim())
+
+    if (queryParts.length === 0) {
+      setDetectedProduct(prev => (prev ? { ...prev, loading: false } : prev))
+      return
+    }
+
+    const query = queryParts.join(' ')
+    setDetectedProduct(prev => (prev ? { ...prev, loading: true, error: null } : prev))
+
+    try {
+      const response = await apiFetch('/api/products/search', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ query, limit: 1 })
+      })
+
+      if (!response.ok) {
+        throw new Error(`Product lookup failed (${response.status})`)
+      }
+
+      const data = await response.json()
+      const topProduct = data?.products?.[0]
+
+      setDetectedProduct(prev =>
+        prev
+          ? {
+              ...prev,
+              name: topProduct?.name ?? null,
+              brand: prev.brand ?? topProduct?.brand ?? null,
+              loading: false
+            }
+          : prev
+      )
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Product lookup failed'
+      console.error('Product lookup error:', error)
+      setDetectedProduct(prev => (prev ? { ...prev, loading: false, error: message } : prev))
+    }
+  }, [])
 
   // Manual frame capture handler
   const handleManualCapture = useCallback(async () => {
@@ -70,42 +136,133 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
       const message = error instanceof Error ? error.message : 'Frame capture failed'
       console.error('Capture error:', error)
       updateScanStatus(`Scan failed: ${message}`)
+      setDetectedProduct(null)
       return
     }
 
-    if (result && result.searchQuery) {
-      updateScanStatus('Searching for coupons...', 0)
+    if (!result) {
+      updateScanStatus('No product detected')
+      setDetectedProduct(null)
+      return
+    }
+
+    const hasProductClues = Boolean(result.brand || result.category)
+    setDetectedProduct({
+      brand: result.brand ?? null,
+      category: result.category ?? null,
+      confidence: result.confidence ?? null,
+      name: null,
+      loading: hasProductClues,
+      error: null
+    })
+
+    if (hasProductClues) {
+      fetchDetectedProductName(result.brand ?? null, result.category ?? null)
+    }
+
+    const querySet = new Set<string>()
+    const prioritizedQueries: string[] = []
+    const addQuery = (value?: string | null) => {
+      if (!value) return
+      const trimmed = value.trim()
+      if (!trimmed) return
+      const normalized = trimmed.toLowerCase()
+      if (querySet.has(normalized)) return
+      querySet.add(normalized)
+      prioritizedQueries.push(trimmed)
+    }
+
+    const combinedQuery = [result.brand, result.category].filter(Boolean).join(' ').trim()
+    addQuery(combinedQuery)
+    addQuery(result.brand)
+    addQuery(result.category)
+    addQuery(result.searchQuery)
+
+    if (prioritizedQueries.length === 0) {
+      updateScanStatus('No recognizable product details')
+      setDetectedProduct(prev => (prev ? { ...prev, loading: false } : prev))
+      return
+    }
+
+    const aggregatedResults: Coupon[] = []
+    const aggregatedIds = new Set<string>()
+    let hasFrontstoreResult = false
+    let hasCategoryBrandResult = false
+
+    for (const query of prioritizedQueries) {
+      updateScanStatus(`Searching for coupons (${query})...`, 0)
 
       try {
-        const foundCoupons = await onSearchTrigger(result.searchQuery)
-
+        const foundCoupons = await onSearchTrigger(query)
         if (foundCoupons && foundCoupons.length > 0) {
-          // Deduplicate by ID
-          setCoupons(prev => {
-            const existingIds = new Set(prev.map(c => c.id))
-            const newCoupons = foundCoupons.filter(c => !existingIds.has(c.id))
-            return [...prev, ...newCoupons]
+          foundCoupons.forEach(coupon => {
+            if (!aggregatedIds.has(coupon.id)) {
+              aggregatedIds.add(coupon.id)
+              aggregatedResults.push(coupon)
+              if (coupon.type === 'frontstore') {
+                hasFrontstoreResult = true
+              } else {
+                hasCategoryBrandResult = true
+              }
+            }
           })
+        }
 
-          // Track detected product to avoid re-scanning
-          if (result.brand || result.category) {
-            const productKey = `${result.brand || ''}_${result.category || ''}`
-            setDetectedProducts(prev => new Set(prev).add(productKey))
-          }
-
-          updateScanStatus(`Found ${foundCoupons.length} new coupon${foundCoupons.length > 1 ? 's' : ''}!`)
-        } else {
-          updateScanStatus('No coupons found for this product')
+        if (hasFrontstoreResult && hasCategoryBrandResult) {
+          break
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Search failed'
         console.error('Search error:', error)
         updateScanStatus(`Search failed: ${message}`)
       }
-    } else {
-      updateScanStatus('No product detected')
     }
-  }, [videoRef, isProcessing, captureFrame, onSearchTrigger, updateScanStatus])
+
+    if (aggregatedResults.length === 0) {
+      updateScanStatus('No coupons found for this product')
+      setDetectedProduct(prev => (prev ? { ...prev, loading: false } : prev))
+      return
+    }
+
+    let addedCount = 0
+    let addedFrontstore = false
+    let addedCategoryBrand = false
+
+    setCoupons(prev => {
+      const existingIds = new Set(prev.map(c => c.id))
+      const uniqueNew = aggregatedResults.filter(c => !existingIds.has(c.id))
+      addedCount = uniqueNew.length
+      addedFrontstore = uniqueNew.some(c => c.type === 'frontstore')
+      addedCategoryBrand = uniqueNew.some(c => c.type !== 'frontstore')
+      if (!uniqueNew.length) return prev
+      return [...prev, ...uniqueNew]
+    })
+
+    if (result.brand || result.category) {
+      const productKey = `${result.brand || ''}_${result.category || ''}`
+      setDetectedProducts(prev => new Set(prev).add(productKey))
+    }
+
+    setDetectedProduct(prev => (prev ? { ...prev, loading: false } : prev))
+
+    if (addedCount === 0) {
+      updateScanStatus('Coupons already captured for this product')
+    } else {
+      const segments: string[] = []
+      if (addedFrontstore) segments.push('front-store')
+      if (addedCategoryBrand) segments.push('category/brand')
+      updateScanStatus(
+        `Found ${addedCount} ${segments.join(' & ')} coupon${addedCount > 1 ? 's' : ''}!`
+      )
+    }
+  }, [
+    videoRef,
+    isProcessing,
+    captureFrame,
+    onSearchTrigger,
+    updateScanStatus,
+    fetchDetectedProductName
+  ])
 
   // Auto-scan with interval
   useEffect(() => {
@@ -130,6 +287,7 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
     }
 
     stopCamera()
+    setDetectedProduct(null)
     onExit()
   }, [coupons.length, stopCamera, onExit])
 
@@ -147,6 +305,41 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
             className="w-full h-full object-cover bg-black"
             style={{ minHeight: '100%', minWidth: '100%' }}
           />
+
+          {/* Detected product summary */}
+          {detectedProduct && (
+            <div className="absolute top-4 left-4 right-4 max-w-sm bg-black/70 text-white p-4 rounded-2xl shadow-2xl backdrop-blur">
+              <p className="text-xs uppercase tracking-wider text-gray-400 mb-1">
+                Detected Product
+              </p>
+              {detectedProduct.loading ? (
+                <p className="text-sm text-gray-200">Identifying product...</p>
+              ) : (
+                <>
+                  <p className="text-lg font-semibold leading-snug">
+                    {detectedProduct.name ||
+                      [detectedProduct.brand, detectedProduct.category]
+                        .filter(Boolean)
+                        .join(' · ') ||
+                      'No catalog match yet'}
+                  </p>
+                  <p className="text-sm text-gray-300">
+                    {[detectedProduct.brand, detectedProduct.category]
+                      .filter(Boolean)
+                      .join(' · ') || 'Awaiting brand/category clues'}
+                  </p>
+                </>
+              )}
+              {detectedProduct.confidence && (
+                <p className="text-xs text-gray-400 mt-1">
+                  Confidence: {detectedProduct.confidence}
+                </p>
+              )}
+              {detectedProduct.error && (
+                <p className="text-xs text-red-400 mt-1">{detectedProduct.error}</p>
+              )}
+            </div>
+          )}
 
           {/* Scan Status Overlay */}
           {(isProcessing || scanStatus) && (
@@ -281,7 +474,7 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
           </div>
 
           {/* Coupon List */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          <div className="flex-1 overflow-y-auto p-4 space-y-6">
             {coupons.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full text-center px-4 py-12">
                 <Camera className="w-16 h-16 text-gray-600 mb-4" />
@@ -293,9 +486,51 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
                 </p>
               </div>
             ) : (
-              coupons.map(coupon => (
-                <CouponCard key={coupon.id} coupon={coupon} />
-              ))
+              <>
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-300">
+                      Front-store Coupons
+                    </h3>
+                    <span className="text-xs text-gray-500">
+                      {frontstoreCoupons.length}
+                    </span>
+                  </div>
+                  {frontstoreCoupons.length === 0 ? (
+                    <div className="rounded-lg border border-dashed border-gray-800/70 p-4 text-sm text-gray-500">
+                      No front-store coupons matched this scan yet.
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {frontstoreCoupons.map(coupon => (
+                        <CouponCard key={coupon.id} coupon={coupon} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-300">
+                      Category / Brand Coupons
+                    </h3>
+                    <span className="text-xs text-gray-500">
+                      {categoryBrandCoupons.length}
+                    </span>
+                  </div>
+                  {categoryBrandCoupons.length === 0 ? (
+                    <div className="rounded-lg border border-dashed border-gray-800/70 p-4 text-sm text-gray-500">
+                      No category or brand coupons matched this scan yet.
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {categoryBrandCoupons.map(coupon => (
+                        <CouponCard key={coupon.id} coupon={coupon} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>
             )}
           </div>
 
@@ -307,6 +542,7 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
                 onClick={() => {
                   setCoupons([])
                   setDetectedProducts(new Set())
+                  setDetectedProduct(null)
                 }}
                 className="w-full !border-gray-600 !text-gray-200 hover:!bg-gray-800 font-semibold"
                 style={{
