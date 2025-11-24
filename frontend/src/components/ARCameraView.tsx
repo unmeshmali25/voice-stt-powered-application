@@ -109,10 +109,10 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
           {/* Video Element */}
           <video
             ref={videoRef}
-            autoPlay
             playsInline
             muted
-            className="w-full h-full object-cover"
+            className="w-full h-full object-cover bg-black"
+            style={{ minHeight: '100%', minWidth: '100%' }}
           />
 
           {/* Scan Status Overlay */}
@@ -143,7 +143,16 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
                 <Camera className="w-16 h-16 mx-auto mb-4 text-red-500" />
                 <h3 className="text-xl font-semibold mb-2">Camera Error</h3>
                 <p className="text-gray-300 mb-4">{cameraError}</p>
-                <Button variant="outline" onClick={handleExit}>
+                <Button
+                  variant="outline"
+                  onClick={handleExit}
+                  className="!border-white/50 !text-white hover:!bg-white/20 font-semibold"
+                  style={{
+                    borderColor: 'rgba(255, 255, 255, 0.5)',
+                    color: 'white',
+                    backgroundColor: 'transparent'
+                  }}
+                >
                   Exit AR Mode
                 </Button>
               </div>
@@ -158,9 +167,14 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
                 size="lg"
                 onClick={handleManualCapture}
                 disabled={isProcessing || !isActive}
-                className="bg-[#CC0000] hover:bg-[#AA0000] text-white"
+                className="!bg-[#CC0000] hover:!bg-[#AA0000] !text-white font-semibold shadow-lg"
+                style={{
+                  backgroundColor: '#CC0000',
+                  color: 'white',
+                  border: 'none'
+                }}
               >
-                <Camera className="w-5 h-5 mr-2" />
+                <Camera className="w-5 h-5 mr-2 text-white" />
                 Scan Now
               </Button>
 
@@ -169,16 +183,21 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
                 size="lg"
                 variant="outline"
                 onClick={() => setIsAutoScan(!isAutoScan)}
-                className="border-white/30 text-white hover:bg-white/10"
+                className="!border-white/50 !text-white hover:!bg-white/20 font-semibold"
+                style={{
+                  borderColor: 'rgba(255, 255, 255, 0.5)',
+                  color: 'white',
+                  backgroundColor: 'transparent'
+                }}
               >
                 {isAutoScan ? (
                   <>
-                    <Pause className="w-5 h-5 mr-2" />
+                    <Pause className="w-5 h-5 mr-2 text-white" />
                     Pause Auto-Scan
                   </>
                 ) : (
                   <>
-                    <Play className="w-5 h-5 mr-2" />
+                    <Play className="w-5 h-5 mr-2 text-white" />
                     Resume Auto-Scan
                   </>
                 )}
@@ -190,9 +209,14 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
                 variant="outline"
                 onClick={switchCamera}
                 disabled={!isActive}
-                className="border-white/30 text-white hover:bg-white/10 hidden sm:flex"
+                className="!border-white/50 !text-white hover:!bg-white/20 hidden sm:flex font-semibold"
+                style={{
+                  borderColor: 'rgba(255, 255, 255, 0.5)',
+                  color: 'white',
+                  backgroundColor: 'transparent'
+                }}
               >
-                <Repeat className="w-5 h-5" />
+                <Repeat className="w-5 h-5 text-white" />
               </Button>
             </div>
           </div>
@@ -216,9 +240,10 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
               variant="ghost"
               size="icon"
               onClick={handleExit}
-              className="text-gray-400 hover:text-white hover:bg-gray-800"
+              className="!text-gray-300 hover:!text-white hover:!bg-gray-800"
+              style={{ color: 'rgb(209, 213, 219)' }}
             >
-              <X className="w-6 h-6" />
+              <X className="w-6 h-6" style={{ color: 'rgb(209, 213, 219)' }} />
             </Button>
           </div>
 
@@ -250,7 +275,12 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
                   setCoupons([])
                   setDetectedProducts(new Set())
                 }}
-                className="w-full border-gray-700 text-gray-300 hover:bg-gray-800"
+                className="w-full !border-gray-600 !text-gray-200 hover:!bg-gray-800 font-semibold"
+                style={{
+                  borderColor: 'rgb(75, 85, 99)',
+                  color: 'rgb(229, 231, 235)',
+                  backgroundColor: 'transparent'
+                }}
               >
                 Clear Results
               </Button>

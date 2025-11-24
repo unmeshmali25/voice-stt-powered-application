@@ -76,10 +76,20 @@ export function useCameraStream(): UseCameraStreamReturn {
       if (videoRef.current) {
         videoRef.current.srcObject = stream
 
-        // Wait for video to be ready
-        videoRef.current.onloadedmetadata = () => {
-          videoRef.current?.play()
-          console.log('Camera stream started successfully')
+        // Wait for video to be ready and play
+        videoRef.current.onloadedmetadata = async () => {
+          if (!videoRef.current) return
+
+          try {
+            // Explicitly play the video (required for some browsers)
+            await videoRef.current.play()
+            console.log('Camera stream started successfully')
+            console.log('Video dimensions:', videoRef.current.videoWidth, 'x', videoRef.current.videoHeight)
+          } catch (playError) {
+            console.error('Failed to play video:', playError)
+            // Autoplay might be blocked - video element will still show stream
+            // User can click to play manually if needed
+          }
         }
       }
 
