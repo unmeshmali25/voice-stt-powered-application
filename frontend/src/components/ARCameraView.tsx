@@ -503,7 +503,7 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
                   ) : (
                     <div className="space-y-3">
                       {frontstoreCoupons.map(coupon => (
-                        <CouponCard key={coupon.id} coupon={coupon} />
+                        <CouponCard key={coupon.id} coupon={coupon} size="compact" />
                       ))}
                     </div>
                   )}
@@ -525,7 +525,7 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
                   ) : (
                     <div className="space-y-3">
                       {categoryBrandCoupons.map(coupon => (
-                        <CouponCard key={coupon.id} coupon={coupon} />
+                        <CouponCard key={coupon.id} coupon={coupon} size="compact" />
                       ))}
                     </div>
                   )}
