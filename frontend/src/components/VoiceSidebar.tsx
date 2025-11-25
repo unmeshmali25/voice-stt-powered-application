@@ -1,21 +1,18 @@
 import { useEffect, useState, useRef } from 'react'
-import { Mic, MicOff, Camera, Loader2, Video } from 'lucide-react'
+import { Mic, MicOff, Camera, Loader2, Video, Search, Sparkles } from 'lucide-react'
 import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
-  SidebarGroup,
-  SidebarGroupLabel,
-  SidebarGroupContent,
   SidebarHeader,
 } from './ui/sidebar'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
-import { Glass } from './ui/glass'
 import { Badge } from './ui/badge'
 import { useVoiceRecording } from '../hooks/useVoiceRecording'
 import { ImageExtractionResult } from '../types/coupon'
 import { apiFetch } from '../lib/api'
+import { cn } from '../lib/utils'
 
 // Discord icon component
 function DiscordIcon({ className }: { className?: string }) {
@@ -60,18 +57,15 @@ export function VoiceSidebar({ onTranscriptChange, onARModeToggle }: VoiceSideba
     if (isRecording) {
       stopRecording()
     } else {
-      // Clear image results when starting voice recording
       setImageResult(null)
       setImageError(null)
       startRecording()
     }
   }
 
-
   const handleTextKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' && textInput.trim()) {
       const searchValue = textInput.trim()
-      // Clear image results when submitting text search
       setImageResult(null)
       setImageError(null)
       setStatusDisplay({ type: 'search', value: searchValue })
@@ -83,7 +77,6 @@ export function VoiceSidebar({ onTranscriptChange, onARModeToggle }: VoiceSideba
   }
 
   const handleCameraClick = () => {
-    // Trigger file input
     fileInputRef.current?.click()
   }
 
@@ -91,14 +84,12 @@ export function VoiceSidebar({ onTranscriptChange, onARModeToggle }: VoiceSideba
     const file = e.target.files?.[0]
     if (!file) return
 
-    // Validate file type
     const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp']
     if (!allowedTypes.includes(file.type)) {
       setImageError('Please upload a JPEG, PNG, or WebP image')
       return
     }
 
-    // Validate file size (max 5MB)
     const maxSizeMB = 5
     if (file.size > maxSizeMB * 1024 * 1024) {
       setImageError(`Image too large. Maximum size is ${maxSizeMB}MB`)
@@ -110,11 +101,9 @@ export function VoiceSidebar({ onTranscriptChange, onARModeToggle }: VoiceSideba
     setImageResult(null)
 
     try {
-      // Create FormData
       const formData = new FormData()
       formData.append('file', file)
 
-      // Call API
       const response = await apiFetch('/api/image-extract', {
         method: 'POST',
         body: formData,
@@ -128,7 +117,6 @@ export function VoiceSidebar({ onTranscriptChange, onARModeToggle }: VoiceSideba
       const result: ImageExtractionResult = await response.json()
       setImageResult(result)
 
-      // Trigger search if we have a query
       if (result.searchQuery && onTranscriptChange) {
         onTranscriptChange(result.searchQuery)
       }
@@ -138,7 +126,6 @@ export function VoiceSidebar({ onTranscriptChange, onARModeToggle }: VoiceSideba
       console.error('Image upload error:', err)
     } finally {
       setIsUploadingImage(false)
-      // Reset file input
       if (fileInputRef.current) {
         fileInputRef.current.value = ''
       }
@@ -146,191 +133,182 @@ export function VoiceSidebar({ onTranscriptChange, onARModeToggle }: VoiceSideba
   }
 
   return (
-    <Sidebar collapsible="none" className="h-screen">
-      <SidebarHeader className="border-b border-sidebar-border">
-        <h2 className="text-lg font-semibold text-center text-sidebar-foreground">
-          Multi-Modal Product + Coupon Search
-        </h2>
+    <Sidebar collapsible="none" className="h-screen border-r border-sidebar-border/50 bg-sidebar/95 backdrop-blur supports-[backdrop-filter]:bg-sidebar/60">
+      <SidebarHeader className="pt-6 pb-2 px-4 border-none">
+         <div className="flex flex-col gap-1 px-1">
+            <h2 className="text-sm font-semibold tracking-tight text-sidebar-foreground uppercase flex items-center gap-2">
+              <Sparkles className="w-3 h-3 text-primary" />
+              Assistant
+            </h2>
+            <p className="text-xs text-muted-foreground">
+              Multi-modal search
+            </p>
+         </div>
       </SidebarHeader>
-      <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupContent>
-            <div className="flex flex-col items-center gap-6 py-8 px-4">
-              {/* Microphone with Glass Design */}
-              <Glass className="w-full h-32 p-6 flex items-center justify-center">
-                <Button
-                  onClick={handleMicClick}
-                  size="lg"
-                  className={`
-                    w-12 h-12 rounded-full text-2xl transition-all duration-300
-                    ${isRecording
-                      ? 'bg-red-600 hover:bg-red-700 animate-pulse shadow-[0_0_30px_rgba(220,53,69,0.8)]'
-                      : 'bg-gradient-to-br from-[#CC0000] to-[#990000] hover:from-[#DD0000] hover:to-[#AA0000] hover:scale-105 shadow-[0_8px_24px_rgba(204,0,0,0.5)]'
-                    }
-                  `}
-                  aria-pressed={isRecording}
-                  aria-label={isRecording ? 'Stop recording' : 'Start recording'}
-                >
-                  {isRecording ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
-                </Button>
-              </Glass>
 
-              {/* Photo Icon Component */}
-              <Glass className="w-full h-32 p-6 flex items-center justify-center relative">
-                <input
+      <SidebarContent className="px-4 gap-6">
+        {/* Search Input - Spotlight Style */}
+        <div className="relative group mt-2">
+          <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
+            <Search className="h-4 w-4 text-muted-foreground/70 group-focus-within:text-primary transition-colors" />
+          </div>
+          <Input
+            type="text"
+            placeholder="Ask anything..."
+            value={textInput}
+            onChange={(e) => setTextInput(e.target.value)}
+            onKeyDown={handleTextKeyDown}
+            className="pl-9 h-10 bg-sidebar-accent/50 border-transparent hover:bg-sidebar-accent/80 focus-visible:bg-background focus-visible:ring-1 focus-visible:ring-primary/20 transition-all shadow-sm rounded-xl"
+          />
+        </div>
+
+        {/* Primary Actions */}
+        <div className="flex flex-col gap-4">
+           {/* Mic Button - Hero */}
+           <div className="flex justify-center py-4">
+              <Button
+                onClick={handleMicClick}
+                variant="ghost"
+                className={cn(
+                  "w-24 h-24 rounded-full transition-all duration-500 flex items-center justify-center relative",
+                  isRecording
+                    ? "bg-red-500/10 text-red-600 shadow-[0_0_40px_-10px_rgba(220,38,38,0.4)] scale-110"
+                    : "bg-gradient-to-b from-sidebar-accent to-sidebar-accent/50 hover:from-sidebar-accent hover:to-sidebar-accent text-sidebar-foreground shadow-sm hover:scale-105 hover:shadow-md border border-sidebar-border/50"
+                )}
+                aria-label={isRecording ? 'Stop recording' : 'Start recording'}
+              >
+                 {isRecording && (
+                    <>
+                      <span className="absolute inset-0 rounded-full border border-red-500/30 animate-[ping_2s_ease-in-out_infinite]" />
+                      <span className="absolute inset-0 rounded-full border border-red-500/20 animate-[ping_2s_ease-in-out_infinite_0.5s]" />
+                    </>
+                 )}
+                 {isRecording ? (
+                   <MicOff className="w-8 h-8 relative z-10" />
+                 ) : (
+                   <Mic className="w-8 h-8 relative z-10" />
+                 )}
+              </Button>
+           </div>
+
+           <div className="grid grid-cols-2 gap-3">
+              <input
                   ref={fileInputRef}
                   type="file"
                   accept="image/jpeg,image/jpg,image/png,image/webp"
                   onChange={handleImageUpload}
                   className="hidden"
-                  aria-label="Upload product image"
-                />
-                <Button
-                  onClick={handleCameraClick}
-                  disabled={isUploadingImage}
-                  size="lg"
-                  className={`
-                    w-12 h-12 rounded-full text-2xl transition-all duration-300
-                    ${isUploadingImage
-                      ? 'bg-sky-400/50 cursor-wait'
-                      : 'bg-gradient-to-br from-sky-400 to-cyan-500 hover:from-sky-500 hover:to-cyan-600 hover:scale-105 shadow-[0_8px_24px_rgba(56,189,248,0.4)]'
-                    }
-                  `}
-                  aria-label="Upload product image"
-                >
-                  {isUploadingImage ? <Loader2 className="w-5 h-5 animate-spin" /> : <Camera className="w-5 h-5" />}
-                </Button>
-              </Glass>
+               />
+              <Button
+                 onClick={handleCameraClick}
+                 disabled={isUploadingImage}
+                 variant="outline"
+                 className="h-20 flex flex-col gap-2 rounded-2xl border-sidebar-border/50 bg-sidebar-accent/30 hover:bg-sidebar-accent/60 transition-all group relative overflow-hidden hover:border-sidebar-border"
+              >
+                 <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-purple-500/5 opacity-0 group-hover:opacity-100 transition-opacity" />
+                 {isUploadingImage ? (
+                    <Loader2 className="w-5 h-5 animate-spin text-primary" />
+                 ) : (
+                    <Camera className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors" />
+                 )}
+                 <span className="text-xs font-medium text-muted-foreground group-hover:text-foreground transition-colors">
+                    Photo
+                 </span>
+              </Button>
 
-              {/* AR Camera Component */}
-              <Glass className="w-full h-32 p-6 flex items-center justify-center">
-                <Button
-                  onClick={onARModeToggle}
-                  size="lg"
-                  className="
-                    w-12 h-12 rounded-full text-2xl transition-all duration-300
-                    bg-gradient-to-br from-purple-500 to-indigo-600 hover:from-purple-600 hover:to-indigo-700 hover:scale-105 shadow-[0_8px_24px_rgba(139,92,246,0.4)]
-                  "
-                  aria-label="Start AR camera mode"
-                >
-                  <Video className="w-5 h-5" />
-                </Button>
-              </Glass>
+              <Button
+                 onClick={onARModeToggle}
+                 variant="outline"
+                 className="h-20 flex flex-col gap-2 rounded-2xl border-sidebar-border/50 bg-sidebar-accent/30 hover:bg-sidebar-accent/60 transition-all group relative overflow-hidden hover:border-sidebar-border"
+              >
+                 <div className="absolute inset-0 bg-gradient-to-br from-purple-500/5 to-pink-500/5 opacity-0 group-hover:opacity-100 transition-opacity" />
+                 <Video className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors" />
+                 <span className="text-xs font-medium text-muted-foreground group-hover:text-foreground transition-colors">
+                    Live AR
+                 </span>
+              </Button>
+           </div>
+        </div>
 
-              {/* Text Input Component */}
-              <Glass className="w-full h-32 p-3 flex items-center justify-center">
-                <Input
-                  type="text"
-                  placeholder="Type to search..."
-                  value={textInput}
-                  onChange={(e) => setTextInput(e.target.value)}
-                  onKeyDown={handleTextKeyDown}
-                  className="bg-transparent border-0 focus-visible:ring-0 placeholder:text-muted-foreground/60 w-full h-full text-center"
-                />
-              </Glass>
-            </div>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
+        {/* Status Section - Unified Glass Panel */}
         {(statusDisplay || error || imageResult || imageError || (latency !== null && statusDisplay?.type === 'transcript')) && (
-          <SidebarGroup>
-            <SidebarGroupLabel>Status</SidebarGroupLabel>
-            <SidebarGroupContent className="px-2">
+          <div className="rounded-2xl border border-sidebar-border/50 bg-sidebar-accent/30 backdrop-blur-sm p-4 space-y-3 shadow-sm animate-in fade-in slide-in-from-bottom-2 duration-300">
               {statusDisplay && (
-                <div className={`p-3 border rounded-md mb-2 ${
-                  statusDisplay.type === 'transcript'
-                    ? 'bg-green-500/10 border-green-500/40'
-                    : 'bg-blue-500/10 border-blue-500/40'
-                }`}>
-                  <p className={`text-xs font-medium mb-1 ${
-                    statusDisplay.type === 'transcript' ? 'text-green-600' : 'text-blue-600'
-                  }`}>
-                    {statusDisplay.type === 'transcript' ? 'Transcript:' : 'Search:'}
-                  </p>
-                  <p className={`text-sm ${
-                    statusDisplay.type === 'transcript' ? 'text-green-800' : 'text-blue-800'
-                  }`}>
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <div className={cn("w-1.5 h-1.5 rounded-full", statusDisplay.type === 'transcript' ? "bg-green-500" : "bg-blue-500")} />
+                    <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                      {statusDisplay.type === 'transcript' ? 'Listening' : 'Searching'}
+                    </span>
+                  </div>
+                  <p className="text-sm text-foreground leading-relaxed">
                     {statusDisplay.value}
                   </p>
                 </div>
               )}
 
               {imageResult && (
-                <div className="p-3 border rounded-md mb-2 bg-sky-500/10 border-sky-500/40">
-                  <div className="flex items-center justify-between mb-2">
-                    <p className="text-xs font-medium text-sky-600">Image Analysis:</p>
-                    <Badge
-                      variant="secondary"
-                      className={`text-xs ${
-                        imageResult.confidence === 'high'
-                          ? 'bg-green-100 text-green-700 border-green-300'
-                          : imageResult.confidence === 'medium'
-                          ? 'bg-yellow-100 text-yellow-700 border-yellow-300'
-                          : 'bg-orange-100 text-orange-700 border-orange-300'
-                      }`}
-                    >
-                      {imageResult.confidence === 'high' ? '⚫ High' : imageResult.confidence === 'medium' ? '🟡 Medium' : '🟠 Low'} Confidence
+                <div className="space-y-2 pt-2 border-t border-sidebar-border/50">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium text-muted-foreground">Analyzed Image</span>
+                    <Badge variant={imageResult.confidence === 'high' ? 'default' : 'secondary'} className="text-[10px] h-5">
+                      {imageResult.confidence} confidence
                     </Badge>
                   </div>
-                  <div className="space-y-1">
-                    {imageResult.brand && (
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-medium text-sky-700">Brand:</span>
-                        <span className="text-sm text-sky-800">{imageResult.brand}</span>
-                      </div>
-                    )}
-                    {imageResult.category && (
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-medium text-sky-700">Category:</span>
-                        <span className="text-sm text-sky-800">{imageResult.category}</span>
-                      </div>
-                    )}
-                    {!imageResult.brand && !imageResult.category && (
-                      <p className="text-sm text-sky-700 italic">No brand or category detected</p>
-                    )}
-                  </div>
+                  {imageResult.brand && (
+                    <div className="text-sm">
+                      <span className="text-muted-foreground">Brand: </span>
+                      <span className="font-medium">{imageResult.brand}</span>
+                    </div>
+                  )}
+                  {imageResult.category && (
+                    <div className="text-sm">
+                       <span className="text-muted-foreground">Category: </span>
+                       <span className="font-medium">{imageResult.category}</span>
+                    </div>
+                  )}
                 </div>
               )}
 
               {error && (
-                <div className="p-3 bg-red-50 border border-red-200 rounded-md mb-2">
-                  <p className="text-xs font-medium text-red-900 mb-1">Error:</p>
-                  <p className="text-sm text-red-800">{error}</p>
+                <div className="pt-2 border-t border-red-200/20">
+                  <p className="text-xs text-red-500 font-medium">{error}</p>
                 </div>
               )}
 
               {imageError && (
-                <div className="p-3 bg-red-50 border border-red-200 rounded-md mb-2">
-                  <p className="text-xs font-medium text-red-900 mb-1">Image Error:</p>
-                  <p className="text-sm text-red-800">{imageError}</p>
+                <div className="pt-2 border-t border-red-200/20">
+                   <p className="text-xs text-red-500 font-medium">{imageError}</p>
                 </div>
               )}
 
               {latency !== null && statusDisplay?.type === 'transcript' && (
-                <div className="text-xs text-muted-foreground">
-                  Latency: {Math.round(latency)}ms
+                <div className="pt-1 flex justify-end">
+                  <span className="text-[10px] text-muted-foreground font-mono opacity-50">
+                    {Math.round(latency)}ms
+                  </span>
                 </div>
               )}
-            </SidebarGroupContent>
-          </SidebarGroup>
+          </div>
         )}
+
       </SidebarContent>
 
-      <SidebarFooter className="border-t border-sidebar-border mt-auto">
-        <div className="p-3">
-          <a
+      <SidebarFooter className="border-t border-sidebar-border/50 p-4">
+        <a
             href="https://discord.gg/VTW3G4zq"
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-2 px-3 py-2 rounded-md text-sm text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
+            className="flex items-center gap-3 px-3 py-2 rounded-xl text-sm text-muted-foreground hover:text-foreground hover:bg-sidebar-accent/50 transition-all group"
           >
-            <DiscordIcon className="w-4 h-4" />
-            <div className="flex flex-col flex-1 min-w-0">
-              <span className="text-xs font-medium">Join Discord Channel</span>
-              <span className="text-xs text-sidebar-foreground/50">Feature Requests & Bugs</span>
+            <div className="p-1.5 rounded-md bg-sidebar-accent group-hover:bg-background transition-colors">
+               <DiscordIcon className="w-4 h-4" />
             </div>
-          </a>
-        </div>
+            <div className="flex flex-col flex-1 min-w-0">
+              <span className="text-xs font-medium">Join Community</span>
+              <span className="text-[10px] text-muted-foreground/70">Feature Requests</span>
+            </div>
+        </a>
       </SidebarFooter>
     </Sidebar>
   )

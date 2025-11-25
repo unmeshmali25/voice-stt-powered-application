@@ -305,3 +305,6 @@ frontend/dist/
 # Platform-specific ignore files
 .railwayignore
 .vercelignore
+
+# All images
+*.jpg
