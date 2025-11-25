@@ -925,6 +925,12 @@ async def coupon_search(
 
 # --- Product Search Endpoint ---
 
+# Search aliases
+PRODUCT_SEARCH_ALIASES = {
+    "multivitamins": "vitamins",
+    "multivitamin": "vitamin"
+}
+
 @app.post("/api/products/search")
 @limiter.limit("30/minute")  # Rate limit: 30 searches per minute per IP
 async def product_search(
@@ -956,6 +962,11 @@ async def product_search(
     
     # Clean query
     search_query = query.strip()
+
+    # Apply aliases
+    if search_query.lower() in PRODUCT_SEARCH_ALIASES:
+        search_query = PRODUCT_SEARCH_ALIASES[search_query.lower()]
+        logger.info(f"Applied alias: {query} -> {search_query}")
     
     try:
         # Full-text search on products
@@ -1048,6 +1059,11 @@ async def product_search_get(
     logger.info(f"User {user_id} searching products (GET) with query: '{query}'")
     
     search_query = query.strip()
+
+    # Apply aliases
+    if search_query.lower() in PRODUCT_SEARCH_ALIASES:
+        search_query = PRODUCT_SEARCH_ALIASES[search_query.lower()]
+        logger.info(f"Applied alias: {query} -> {search_query}")
     
     try:
         # Full-text search on products

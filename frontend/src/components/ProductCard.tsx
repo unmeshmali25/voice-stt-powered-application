@@ -1,7 +1,6 @@
 import { Card, CardContent, CardHeader } from './ui/card'
-import { Button } from './ui/button'
 import { Product } from '../types/product'
-import { ShoppingCart, Star } from 'lucide-react'
+import { Star } from 'lucide-react'
 
 interface ProductCardProps {
   product: Product
@@ -10,12 +9,12 @@ interface ProductCardProps {
 export function ProductCard({ product }: ProductCardProps) {
   return (
     <Card className="shadow-[0_4px_12px_rgba(0,0,0,0.5)] hover:shadow-[0_12px_32px_rgba(255,215,0,0.4)] hover:scale-110 hover:z-30 hover:border-amber-400/60 transition-all duration-300 border-border/50 backdrop-blur-sm">
-      <CardHeader className="p-0">
-        <div className="relative w-full h-20 overflow-hidden rounded-t-lg bg-gray-100">
+      <CardHeader className="p-2">
+        <div className="relative w-full h-32 overflow-hidden rounded-md bg-white flex items-center justify-center p-2">
           <img
             src={product.imageUrl}
             alt={product.name}
-            className="w-full h-full object-cover"
+            className="w-full h-full object-contain"
             onError={(e) => {
               // Fallback to a placeholder if image fails to load
               const target = e.target as HTMLImageElement;
@@ -65,18 +64,8 @@ export function ProductCard({ product }: ProductCardProps) {
               {product.promoText}
             </div>
           )}
-
-          {/* Add Button */}
-          <Button
-            className="w-full bg-[#0033A0] hover:bg-[#002080] text-white rounded-full text-xs py-1"
-            size="sm"
-          >
-            <ShoppingCart className="w-3 h-3 mr-1" />
-            Add
-          </Button>
         </div>
       </CardContent>
     </Card>
   )
 }
-
