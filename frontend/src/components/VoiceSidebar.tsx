@@ -7,6 +7,7 @@ import {
   SidebarGroup,
   SidebarGroupLabel,
   SidebarGroupContent,
+  SidebarHeader,
 } from './ui/sidebar'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
@@ -146,6 +147,11 @@ export function VoiceSidebar({ onTranscriptChange, onARModeToggle }: VoiceSideba
 
   return (
     <Sidebar collapsible="none" className="h-screen">
+      <SidebarHeader className="border-b border-sidebar-border">
+        <h2 className="text-lg font-semibold text-center text-sidebar-foreground">
+          Multi-Modal Product + Coupon Search
+        </h2>
+      </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>
           <SidebarGroupContent>
