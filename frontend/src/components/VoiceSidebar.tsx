@@ -141,7 +141,7 @@ export function VoiceSidebar({ onTranscriptChange, onARModeToggle }: VoiceSideba
               Product & Coupon Search
             </h2>
             <p className="text-xs text-muted-foreground">
-              Find Products & Deals
+              Multi-Modal Search
             </p>
          </div>
       </SidebarHeader>
