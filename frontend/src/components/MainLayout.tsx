@@ -359,7 +359,7 @@ export function MainLayout() {
                 <div className="space-y-4">
                   <div className="mb-6">
                     <h2 className="text-2xl font-bold mb-1">
-                      Recommended for you
+                      {transcript ? 'Products found' : 'Recommended for you'}
                     </h2>
                     <p className="text-xs text-muted-foreground">
                       {transcript ? `Products matching "${transcript}"` : 'Popular products'}
