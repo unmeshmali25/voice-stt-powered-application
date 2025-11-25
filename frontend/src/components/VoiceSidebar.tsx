@@ -138,10 +138,10 @@ export function VoiceSidebar({ onTranscriptChange, onARModeToggle }: VoiceSideba
          <div className="flex flex-col gap-1 px-1">
             <h2 className="text-sm font-semibold tracking-tight text-sidebar-foreground uppercase flex items-center gap-2">
               <Sparkles className="w-3 h-3 text-primary" />
-              Assistant
+              Product & Coupon Search
             </h2>
             <p className="text-xs text-muted-foreground">
-              Multi-modal search
+              Find Products & Deals
             </p>
          </div>
       </SidebarHeader>
