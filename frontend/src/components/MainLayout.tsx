@@ -168,10 +168,42 @@ export function MainLayout() {
     }
   }, []) // Empty dependency array - only create once
 
-  // Load personalized recommendations on startup (only once)
+  const syncUserProfile = useCallback(async () => {
+    try {
+      const response = await apiFetch('/api/auth/me', {
+        method: 'GET'
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        console.warn('User profile sync failed:', {
+          status: response.status,
+          error: errorData.detail || 'Unknown error'
+        })
+        return
+      }
+
+      const userData = await response.json()
+      console.log('User profile synced successfully:', {
+        id: userData.id,
+        email: userData.email,
+        created_at: userData.created_at
+      })
+    } catch (error) {
+      console.error('Failed to sync user profile:', error)
+    }
+  }, [])
+
+  // Load personalized recommendations and sync user profile on startup
   useEffect(() => {
-    loadRecommendations()
-  }, [loadRecommendations])
+    // Sync user profile and load recommendations in parallel
+    Promise.all([
+      syncUserProfile(),
+      loadRecommendations()
+    ]).catch(error => {
+      console.error('Startup initialization had errors:', error)
+    })
+  }, [syncUserProfile, loadRecommendations])
 
   const handleTranscriptChange = useCallback(async (newTranscript: string) => {
     setTranscript(newTranscript)
