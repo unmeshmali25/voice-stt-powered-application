@@ -83,15 +83,25 @@ except Exception:
     # If anything goes wrong, fall back to the original DATABASE_URL
     pass
 
-# Database engine
-engine = create_engine(
-    DATABASE_URL,
-    pool_size=5,
-    max_overflow=10,
-    pool_pre_ping=True,
-    pool_recycle=3600
-)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    # Database engine
+    engine = create_engine(
+        DATABASE_URL,
+        pool_size=5,
+        max_overflow=10,
+        pool_pre_ping=True,
+        pool_recycle=3600
+    )
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+    # Import sync function
+    try:
+        from sync_users_from_auth import sync_users_from_auth
+    except ImportError:
+        # If running from scripts directory
+        sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+        from sync_users_from_auth import sync_users_from_auth
+
+
 
 
 def assign_random_coupons_to_user(db, user_id: str) -> int:
@@ -213,6 +223,14 @@ def main():
     session = SessionLocal()
     
     try:
+        # Always try to sync users first to ensure we have the latest from auth.users
+        print("Syncing users from auth.users...")
+        try:
+            sync_users_from_auth(session)
+        except Exception as e:
+            print(f"Warning: Sync failed: {e}")
+            print("Continuing with existing users...")
+
         # Fetch all users
         result = session.execute(
             text("SELECT id, email FROM users ORDER BY created_at")
@@ -220,76 +238,8 @@ def main():
         users = result.fetchall()
         
         if not users:
-            print("⚠️  No users found in local users table.")
-            print()
-            print("This might mean users exist in Supabase auth.users but haven't been synced yet.")
-            print("Would you like to sync users from auth.users first?")
-            print()
-            response = input("Sync users from auth.users? (Y/n): ")
-            
-            if response.lower() != 'n':
-                print()
-                print("Syncing users from auth.users...")
-                try:
-                    # Try to sync from auth.users
-                    auth_result = session.execute(
-                        text("""
-                            SELECT 
-                                id,
-                                email,
-                                raw_user_meta_data->>'full_name' as full_name,
-                                created_at
-                            FROM auth.users
-                            WHERE email IS NOT NULL
-                        """)
-                    )
-                    auth_users = auth_result.fetchall()
-                    
-                    if auth_users:
-                        synced = 0
-                        for user_id, email, full_name, created_at in auth_users:
-                            try:
-                                session.execute(
-                                    text("""
-                                        INSERT INTO users (id, email, full_name, created_at)
-                                        VALUES (:id, :email, :full_name, :created_at)
-                                        ON CONFLICT (id) DO UPDATE SET
-                                            email = EXCLUDED.email,
-                                            full_name = EXCLUDED.full_name,
-                                            updated_at = CURRENT_TIMESTAMP
-                                    """),
-                                    {
-                                        "id": user_id,
-                                        "email": email,
-                                        "full_name": full_name,
-                                        "created_at": created_at
-                                    }
-                                )
-                                synced += 1
-                                print(f"  ✓ Synced: {email}")
-                            except Exception as e:
-                                print(f"  ✗ Failed to sync {email}: {e}")
-                        
-                        session.commit()
-                        print(f"\n✅ Synced {synced} users from auth.users")
-                        print()
-                        
-                        # Re-fetch users after sync
-                        result = session.execute(
-                            text("SELECT id, email FROM users ORDER BY created_at")
-                        )
-                        users = result.fetchall()
-                    else:
-                        print("No users found in auth.users either.")
-                        return
-                except Exception as e:
-                    print(f"❌ Failed to sync from auth.users: {e}")
-                    print("   You may need to run: python scripts/sync_users_from_auth.py")
-                    return
-            else:
-                print("Aborted. Please sync users first or run:")
-                print("  python scripts/sync_users_from_auth.py")
-                return
+            print("⚠️  No users found in local users table even after sync.")
+            return
         
         print(f"Found {len(users)} users in database")
         print()
