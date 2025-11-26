@@ -118,6 +118,8 @@ export function MainLayout() {
   const [isLoadingCoupons, setIsLoadingCoupons] = useState(false)
   const [hasSearched, setHasSearched] = useState(false)
   const [isARMode, setIsARMode] = useState(false)
+  const [isWalletView, setIsWalletView] = useState(true)  // Track wallet vs search mode
+  const [categoryBrandVisibleCount, setCategoryBrandVisibleCount] = useState(5)  // Pagination
   const { user, signOut } = useAuth()
 
   const loadRecommendations = useCallback(async () => {
@@ -168,6 +170,53 @@ export function MainLayout() {
     }
   }, []) // Empty dependency array - only create once
 
+  const loadWalletCoupons = useCallback(async () => {
+    setIsLoadingCoupons(true)
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+
+      if (!session?.access_token) {
+        console.log('No session, cannot load wallet coupons')
+        setFrontstoreCoupons([])
+        setCategoryBrandCoupons([])
+        return
+      }
+
+      const response = await apiFetch('/api/coupons/wallet', {
+        method: 'GET'
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        console.log(`Loaded wallet: ${data.frontstore.length} frontstore, ${data.categoryBrand.length} category/brand`)
+
+        // Transform to Coupon type
+        const transformFn = (c: any) => ({
+          id: c.id,
+          type: c.type,
+          discountDetails: c.discount_details,
+          categoryOrBrand: c.category_or_brand,
+          expirationDate: c.expiration_date,
+          terms: c.terms
+        })
+
+        setFrontstoreCoupons(data.frontstore.map(transformFn))
+        setCategoryBrandCoupons(data.categoryBrand.map(transformFn))
+      } else {
+        console.error('Failed to load wallet coupons')
+        setFrontstoreCoupons([])
+        setCategoryBrandCoupons([])
+      }
+    } catch (error) {
+      console.error('Error loading wallet coupons:', error)
+      setFrontstoreCoupons([])
+      setCategoryBrandCoupons([])
+    } finally {
+      setIsLoadingCoupons(false)
+    }
+  }, [])
+
   const syncUserProfile = useCallback(async () => {
     try {
       const response = await apiFetch('/api/auth/me', {
@@ -199,24 +248,31 @@ export function MainLayout() {
     // Sync user profile and load recommendations in parallel
     Promise.all([
       syncUserProfile(),
-      loadRecommendations()
+      loadRecommendations(),
+      loadWalletCoupons()
     ]).catch(error => {
       console.error('Startup initialization had errors:', error)
     })
-  }, [syncUserProfile, loadRecommendations])
+  }, [syncUserProfile, loadRecommendations, loadWalletCoupons])
 
   const handleTranscriptChange = useCallback(async (newTranscript: string) => {
     setTranscript(newTranscript)
-    setHasSearched(true)
 
-    // If transcript is empty, reset to recommendations
+    // If transcript is empty, return to wallet mode
     if (!newTranscript.trim()) {
-      loadRecommendations()
-      setFrontstoreCoupons([])
-      setCategoryBrandCoupons([])
+      setIsWalletView(true)
+      setCategoryBrandVisibleCount(5)  // Reset to 5 for wallet view
       setHasSearched(false)
+      // Reload wallet coupons and recommendations
+      await loadWalletCoupons()
+      await loadRecommendations()
       return
     }
+
+    // Switch to search mode
+    setIsWalletView(false)
+    setCategoryBrandVisibleCount(4)  // Set to 4 for search results
+    setHasSearched(true)
 
     // Get auth token
     const { data: { session } } = await supabase.auth.getSession()
@@ -294,7 +350,11 @@ export function MainLayout() {
     } finally {
       setIsLoadingCoupons(false)
     }
-  }, [loadRecommendations])
+  }, [loadRecommendations, loadWalletCoupons])
+
+  const handleLoadMoreCoupons = useCallback(() => {
+    setCategoryBrandVisibleCount(prev => prev + 10)  // Load 10 more at a time
+  }, [])
 
   const handleSignOut = async () => {
     await signOut()
@@ -472,10 +532,10 @@ export function MainLayout() {
                   <div className="mb-6">
                     <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-1 flex items-center gap-2">
                       <span className="text-red-500">🎁</span>
-                      Front-store Offers
+                      {isWalletView ? 'Coupons in Wallet' : 'Applicable Coupons'}
                     </h2>
                     <p className="text-xs text-muted-foreground">
-                      Discounts on entire basket
+                      {isWalletView ? 'Front-store discounts' : 'Front-store offers matching your search'}
                     </p>
                   </div>
                   <div className="space-y-4">
@@ -487,7 +547,10 @@ export function MainLayout() {
                       </>
                     ) : frontstoreCoupons.length === 0 ? (
                       <div className="text-sm text-muted-foreground text-center py-8">
-                        {hasSearched ? 'No frontstore coupons match your search' : 'No frontstore coupons available'}
+                        {hasSearched
+                          ? 'No frontstore coupons match your search'
+                          : (isWalletView ? 'No frontstore coupons in your wallet' : 'No frontstore coupons available')
+                        }
                       </div>
                     ) : (
                       frontstoreCoupons.map((coupon) => (
@@ -502,10 +565,13 @@ export function MainLayout() {
                   <div className="mb-6">
                     <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-1 flex items-center gap-2">
                       <span className="text-green-600">✨</span>
-                      Category & Brand Offers
+                      {isWalletView ? 'Category & Brand' : 'Applicable Offers'}
                     </h2>
                     <p className="text-xs text-muted-foreground">
-                      {transcript ? `Results for "${transcript}"` : 'Use voice to search'}
+                      {isWalletView
+                        ? 'Product-specific discounts'
+                        : (transcript ? `Results for "${transcript}"` : 'Search results')
+                      }
                     </p>
                   </div>
                   <div className="space-y-4">
@@ -517,12 +583,27 @@ export function MainLayout() {
                       </>
                     ) : categoryBrandCoupons.length === 0 ? (
                       <div className="text-sm text-muted-foreground text-center py-8">
-                        {hasSearched ? 'No category/brand coupons match your search' : 'Use voice search to find relevant coupons'}
+                        {hasSearched
+                          ? 'No category/brand coupons match your search'
+                          : (isWalletView ? 'No category/brand coupons in your wallet' : 'Use voice search to find relevant coupons')
+                        }
                       </div>
                     ) : (
-                      categoryBrandCoupons.map((coupon) => (
-                        <CouponCard key={coupon.id} coupon={coupon} />
-                      ))
+                      <>
+                        {categoryBrandCoupons.slice(0, categoryBrandVisibleCount).map((coupon) => (
+                          <CouponCard key={coupon.id} coupon={coupon} />
+                        ))}
+
+                        {categoryBrandCoupons.length > categoryBrandVisibleCount && (
+                          <Button
+                            variant="outline"
+                            onClick={handleLoadMoreCoupons}
+                            className="w-full mt-2"
+                          >
+                            Load More ({categoryBrandCoupons.length - categoryBrandVisibleCount} remaining)
+                          </Button>
+                        )}
+                      </>
                     )}
                   </div>
                 </div>

@@ -1233,6 +1233,79 @@ async def product_recommendations(
         )
 
 
+@app.get("/api/coupons/wallet")
+@limiter.limit("30/minute")
+async def get_wallet_coupons(
+    request: Request,
+    user: Dict[str, Any] = Depends(verify_token),
+    db: Session = Depends(get_db)
+) -> JSONResponse:
+    """
+    Get all active coupons assigned to the authenticated user.
+    Returns coupons split by type (frontstore vs category/brand).
+    """
+    user_id = user["user_id"]
+
+    try:
+        # Query active coupons for this user
+        query = text("""
+            SELECT
+                c.id,
+                c.type,
+                c.discount_details,
+                c.category_or_brand,
+                c.expiration_date,
+                c.terms
+            FROM coupons c
+            JOIN user_coupons uc ON c.id = uc.coupon_id
+            WHERE uc.user_id = :user_id
+              AND uc.eligible_until > NOW()
+              AND c.expiration_date > NOW()
+            ORDER BY
+                CASE c.type
+                    WHEN 'frontstore' THEN 1
+                    WHEN 'category' THEN 2
+                    WHEN 'brand' THEN 3
+                END,
+                c.expiration_date ASC
+        """)
+
+        result = db.execute(query, {"user_id": user_id})
+        rows = result.fetchall()
+
+        # Transform to list of dicts
+        all_coupons = [
+            {
+                "id": str(row.id),
+                "type": row.type,
+                "discount_details": row.discount_details,
+                "category_or_brand": row.category_or_brand,
+                "expiration_date": row.expiration_date.isoformat() if row.expiration_date else None,
+                "terms": row.terms
+            }
+            for row in rows
+        ]
+
+        # Split by type
+        frontstore = [c for c in all_coupons if c["type"] == "frontstore"]
+        category_brand = [c for c in all_coupons if c["type"] in ("category", "brand")]
+
+        logger.info(f"Wallet for user {user_id}: {len(frontstore)} frontstore, {len(category_brand)} category/brand")
+
+        return JSONResponse({
+            "frontstore": frontstore,
+            "categoryBrand": category_brand,
+            "total": len(all_coupons)
+        })
+
+    except Exception as e:
+        logger.exception(f"Wallet fetch failed for user {user_id}: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch wallet coupons: {str(e)}"
+        )
+
+
 @app.post("/api/image-extract")
 @limiter.limit("30/minute")  # Rate limit: 30 requests per minute per IP (increased for AR mode)
 async def image_extract(
