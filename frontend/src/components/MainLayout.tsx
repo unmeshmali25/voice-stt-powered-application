@@ -245,14 +245,22 @@ export function MainLayout() {
 
   // Load personalized recommendations and sync user profile on startup
   useEffect(() => {
-    // Sync user profile and load recommendations in parallel
-    Promise.all([
-      syncUserProfile(),
-      loadRecommendations(),
-      loadWalletCoupons()
-    ]).catch(error => {
-      console.error('Startup initialization had errors:', error)
-    })
+    const initializeUser = async () => {
+      try {
+        // Step 1: Sync user profile first (assigns coupons if needed)
+        await syncUserProfile()
+
+        // Step 2: After sync completes, load wallet and recommendations in parallel
+        await Promise.all([
+          loadWalletCoupons(),
+          loadRecommendations()
+        ])
+      } catch (error) {
+        console.error('Startup initialization had errors:', error)
+      }
+    }
+
+    initializeUser()
   }, [syncUserProfile, loadRecommendations, loadWalletCoupons])
 
   const handleTranscriptChange = useCallback(async (newTranscript: string) => {
