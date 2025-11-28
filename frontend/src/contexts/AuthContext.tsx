@@ -62,10 +62,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   const signInWithGoogle = async () => {
+    // In development, redirect to localhost.
+    // In production (staging), force redirect to the canonical URL to avoid getting stuck on old preview deployments.
+    const redirectTo = `${window.location.origin}/`
+
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: `${window.location.origin}/`,
+        redirectTo,
       },
     })
     if (error) {
