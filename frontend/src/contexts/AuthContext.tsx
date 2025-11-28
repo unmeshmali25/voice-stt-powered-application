@@ -62,10 +62,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   const signInWithGoogle = async () => {
+    // In development, redirect to localhost.
+    // In production (staging), force redirect to the canonical URL to avoid getting stuck on old preview deployments.
+    const redirectTo = import.meta.env.DEV 
+      ? `${window.location.origin}/`
+      : 'https://voice-stt-powered-application-staging.vercel.app/'
+
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: `${window.location.origin}/`,
+        redirectTo,
       },
     })
     if (error) {
