@@ -150,7 +150,7 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
     setDetectedProduct({
       brand: result.brand ?? null,
       category: result.category ?? null,
-      confidence: result.confidence ?? null,
+      confidence: result.confidence ? String(result.confidence) : null,
       name: null,
       loading: hasProductClues,
       error: null
@@ -374,79 +374,82 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
           )}
 
           {/* Control Bar (Bottom) */}
-          <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/90 via-black/50 to-transparent">
-            <div className="flex items-center justify-center gap-4">
-              {/* Manual Capture Button */}
-              <Button
-                size="lg"
-                onClick={handleManualCapture}
-                disabled={isProcessing || !isActive}
-                className="!bg-[#CC0000] hover:!bg-[#AA0000] !text-white font-semibold shadow-lg"
-                style={{
-                  backgroundColor: '#CC0000',
-                  color: 'white',
-                  border: 'none'
-                }}
-              >
-                <Camera className="w-5 h-5 mr-2 text-white" />
-                Scan Now
-              </Button>
+          <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/90 via-black/50 to-transparent">
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-center gap-3">
+                {/* Manual Capture Button */}
+                <Button
+                  size="default"
+                  onClick={handleManualCapture}
+                  disabled={isProcessing || !isActive}
+                  className="!bg-[#CC0000] hover:!bg-[#AA0000] !text-white font-semibold shadow-lg flex-1 max-w-[140px]"
+                  style={{
+                    backgroundColor: '#CC0000',
+                    color: 'white',
+                    border: 'none'
+                  }}
+                >
+                  <Camera className="w-4 h-4 mr-2 text-white" />
+                  Scan
+                </Button>
 
-              {/* Auto-Scan Toggle */}
-              <Button
-                size="lg"
-                variant="outline"
-                onClick={() => {
-                  if (!isAutoScan) {
-                    const confirmed = window.confirm(
-                      'Auto-scan captures frames every few seconds and may increase processing costs. Do you want to resume auto-scan?'
-                    )
-                    if (!confirmed) {
-                      return
+                {/* Auto-Scan Toggle */}
+                <Button
+                  size="default"
+                  variant="outline"
+                  onClick={() => {
+                    if (!isAutoScan) {
+                      const confirmed = window.confirm(
+                        'Auto-scan captures frames every few seconds and may increase processing costs. Do you want to resume auto-scan?'
+                      )
+                      if (!confirmed) {
+                        return
+                      }
                     }
-                  }
-                  setIsAutoScan(prev => !prev)
-                }}
-                className="!border-white/50 !text-white hover:!bg-white/20 font-semibold"
-                style={{
-                  borderColor: 'rgba(255, 255, 255, 0.5)',
-                  color: 'white',
-                  backgroundColor: 'transparent'
-                }}
-              >
-                {isAutoScan ? (
-                  <>
-                    <Pause className="w-5 h-5 mr-2 text-white" />
-                    Pause Auto-Scan
-                  </>
-                ) : (
-                  <>
-                    <Play className="w-5 h-5 mr-2 text-white" />
-                    Resume Auto-Scan
-                  </>
-                )}
-              </Button>
+                    setIsAutoScan(prev => !prev)
+                  }}
+                  className="!border-white/50 !text-white hover:!bg-white/20 font-semibold flex-1 max-w-[140px]"
+                  style={{
+                    borderColor: 'rgba(255, 255, 255, 0.5)',
+                    color: 'white',
+                    backgroundColor: 'transparent'
+                  }}
+                >
+                  {isAutoScan ? (
+                    <>
+                      <Pause className="w-4 h-4 mr-2 text-white" />
+                      Pause
+                    </>
+                  ) : (
+                    <>
+                      <Play className="w-4 h-4 mr-2 text-white" />
+                      Auto-Scan
+                    </>
+                  )}
+                </Button>
+
+                {/* Switch Camera (Mobile) */}
+                <Button
+                  size="icon"
+                  variant="outline"
+                  onClick={switchCamera}
+                  disabled={!isActive}
+                  className="!border-white/50 !text-white hover:!bg-white/20 font-semibold w-10 h-10"
+                  style={{
+                    borderColor: 'rgba(255, 255, 255, 0.5)',
+                    color: 'white',
+                    backgroundColor: 'transparent'
+                  }}
+                >
+                  <Repeat className="w-4 h-4 text-white" />
+                </Button>
+              </div>
+              
               {!isAutoScan && (
-                <p className="text-xs text-gray-300 text-center w-full">
-                  Auto-scan is paused to save processing costs. Resume only when needed.
+                <p className="text-[10px] text-gray-400 text-center w-full">
+                  Auto-scan paused
                 </p>
               )}
-
-              {/* Switch Camera (Mobile) */}
-              <Button
-                size="lg"
-                variant="outline"
-                onClick={switchCamera}
-                disabled={!isActive}
-                className="!border-white/50 !text-white hover:!bg-white/20 hidden sm:flex font-semibold"
-                style={{
-                  borderColor: 'rgba(255, 255, 255, 0.5)',
-                  color: 'white',
-                  backgroundColor: 'transparent'
-                }}
-              >
-                <Repeat className="w-5 h-5 text-white" />
-              </Button>
             </div>
           </div>
         </div>
@@ -544,7 +547,6 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
                 variant="outline"
                 onClick={() => {
                   setCoupons([])
-                  setDetectedProducts(new Set())
                   setDetectedProduct(null)
                 }}
                 className="w-full !border-gray-600 !text-gray-200 hover:!bg-gray-800 font-semibold"

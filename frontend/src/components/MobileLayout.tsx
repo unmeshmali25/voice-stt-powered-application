@@ -46,31 +46,32 @@ export function MobileLayout() {
   const handleMicClick = () => {
     if (isRecording) {
       stopRecording()
-      // The transcript will be updated via the useVoiceRecording hook which should be connected to handleTranscriptChange
-      // However, since useVoiceRecording is internal to VoiceSidebar in the original code, we might need to adapt it.
-      // For now, let's assume we can pass the transcript change handler if we were using the hook directly.
-      // But wait, useStoreData doesn't expose useVoiceRecording.
-      // Let's use the hook here directly and update the store when transcript changes.
     } else {
       startRecording()
     }
   }
 
-  // Effect to sync voice transcript with store
-  // Note: In a real implementation, we'd need to pass the transcript from useVoiceRecording to handleTranscriptChange
-  // But useVoiceRecording returns the transcript state.
-  // Let's just use the hook here and sync it.
-  const voice = useVoiceRecording()
+  // Sync voice transcript to store when it changes
+  // We need to listen to the transcript from useVoiceRecording and update the store
+  // However, useVoiceRecording returns 'transcript' which is the live transcript.
+  // We should update the search query when recording stops or when transcript updates.
+  // For simplicity, let's just update the search query as the user speaks.
+  // Note: In a real app, we might want to wait for silence or a stop command.
   
-  // Sync voice transcript to store when it changes and is final
-  // This part is a bit tricky without seeing the internals of useVoiceRecording again.
-  // Assuming useVoiceRecording returns a transcript string that updates as you speak.
+  // Let's assume we want to update the search query when the transcript changes
+  // But we need to be careful not to trigger too many searches.
+  // The original VoiceSidebar calls onTranscriptChange.
   
-  // Let's simplify for now and assume the user types or we use a simple mic button that toggles recording
-  // and we'd need to handle the transcript update.
+  // Let's just use the transcript from the hook to update the input value
+  // and trigger search when recording stops.
   
-  // Actually, let's look at VoiceSidebar again. It uses useVoiceRecording and has a useEffect to call onTranscriptChange.
-  // We should replicate that here.
+  // Actually, let's just use the transcript directly.
+  const { transcript: voiceTranscript } = useVoiceRecording()
+  
+  // If voice transcript changes, update search query
+  if (voiceTranscript && voiceTranscript !== searchQuery && isRecording) {
+    setSearchQuery(voiceTranscript)
+  }
 
   return (
     <div className="flex flex-col h-screen bg-background">
@@ -79,12 +80,24 @@ export function MobileLayout() {
         <div className="flex items-center gap-3">
           <form onSubmit={handleSearchSubmit} className="flex-1 relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input 
+            <Input
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search products..." 
-              className="pl-9 h-10 rounded-full bg-muted/50 border-transparent focus-visible:bg-background focus-visible:ring-primary/20"
+              placeholder="Search products..."
+              className="pl-9 pr-10 h-10 rounded-full bg-muted/50 border-transparent focus-visible:bg-background focus-visible:ring-primary/20"
             />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className={cn(
+                "absolute right-1 top-1/2 -translate-y-1/2 h-8 w-8 rounded-full hover:bg-background/50",
+                isRecording && "text-red-500 animate-pulse"
+              )}
+              onClick={handleMicClick}
+            >
+              {isRecording ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+            </Button>
           </form>
           {user && (
             <Button variant="ghost" size="icon" className="rounded-full" onClick={() => signOut()}>
@@ -105,6 +118,28 @@ export function MobileLayout() {
           <>
             {activeTab === 'shop' && (
               <div className="space-y-6">
+                {/* Coupons Section (Visible when searching or recommended) */}
+                {(frontstoreCoupons.length > 0 || categoryBrandCoupons.length > 0) && (
+                  <div className="space-y-3">
+                    <h2 className="text-sm font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-2">
+                      <span className="text-red-500">🎁</span>
+                      Available Coupons
+                    </h2>
+                    <div className="flex gap-3 overflow-x-auto pb-2 -mx-4 px-4 scrollbar-hide">
+                      {frontstoreCoupons.map(coupon => (
+                        <div key={coupon.id} className="min-w-[280px]">
+                          <CouponCard coupon={coupon} size="compact" />
+                        </div>
+                      ))}
+                      {categoryBrandCoupons.map(coupon => (
+                        <div key={coupon.id} className="min-w-[280px]">
+                          <CouponCard coupon={coupon} size="compact" />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {/* Products Section */}
                 <div>
                   <h2 className="text-lg font-bold mb-3">
@@ -189,29 +224,17 @@ export function MobileLayout() {
                <div className="flex flex-col items-center justify-center h-full space-y-6 py-12">
                   <div className="text-center space-y-2">
                     <h2 className="text-2xl font-bold">Scan & Search</h2>
-                    <p className="text-muted-foreground">Use your camera or voice to find products</p>
+                    <p className="text-muted-foreground">Use your camera to find products</p>
                   </div>
                   
-                  <div className="grid grid-cols-2 gap-4 w-full max-w-xs">
-                    <Button 
-                      variant="outline" 
-                      className="h-32 flex flex-col gap-3 rounded-2xl border-2 hover:border-primary/50 hover:bg-primary/5"
+                  <div className="w-full max-w-xs">
+                    <Button
+                      variant="outline"
+                      className="w-full h-32 flex flex-col gap-3 rounded-2xl border-2 hover:border-primary/50 hover:bg-primary/5"
                       onClick={toggleARMode}
                     >
-                      <Scan className="w-8 h-8 text-primary" />
-                      <span className="font-medium">AR Scanner</span>
-                    </Button>
-                    
-                    <Button 
-                      variant="outline" 
-                      className={cn(
-                        "h-32 flex flex-col gap-3 rounded-2xl border-2 hover:border-primary/50 hover:bg-primary/5",
-                        isRecording && "border-red-500 bg-red-50 text-red-600 animate-pulse"
-                      )}
-                      onClick={handleMicClick}
-                    >
-                      {isRecording ? <MicOff className="w-8 h-8" /> : <Mic className="w-8 h-8 text-primary" />}
-                      <span className="font-medium">{isRecording ? 'Stop' : 'Voice Search'}</span>
+                      <Scan className="w-12 h-12 text-primary" />
+                      <span className="text-lg font-medium">Start AR Scanner</span>
                     </Button>
                   </div>
                </div>
