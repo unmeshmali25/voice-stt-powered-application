@@ -77,8 +77,8 @@ export function MobileLayout() {
               variant="ghost"
               size="icon"
               className={cn(
-                "absolute right-1 top-1/2 -translate-y-1/2 h-8 w-8 rounded-full hover:bg-background/50",
-                isRecording && "text-red-500 animate-pulse"
+                "absolute right-1 top-1/2 -translate-y-1/2 h-8 w-8 rounded-full hover:bg-background/50 transition-colors",
+                isRecording && "bg-red-100 text-red-600 hover:bg-red-200 hover:text-red-700"
               )}
               onClick={handleMicClick}
             >
