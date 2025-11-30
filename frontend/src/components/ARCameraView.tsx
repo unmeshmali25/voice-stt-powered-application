@@ -77,8 +77,8 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
     }
   }, [stopCamera, clearResult])
 
-  const fetchDetectedProductName = useCallback(async (brand: string | null, category: string | null) => {
-    const queryParts = [brand, category]
+  const fetchDetectedProductName = useCallback(async (productName: string | null, brand: string | null, category: string | null) => {
+    const queryParts = [productName, brand, category]
       .filter((part): part is string => !!part && part.trim().length > 0)
       .map(part => part.trim())
 
@@ -110,7 +110,7 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
         prev
           ? {
               ...prev,
-              name: topProduct?.name ?? null,
+              name: topProduct?.name ?? prev.name ?? null,
               brand: prev.brand ?? topProduct?.brand ?? null,
               loading: false
             }
@@ -146,12 +146,12 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
       return
     }
 
-    const hasProductClues = Boolean(result.brand || result.category)
+    const hasProductClues = Boolean(result.product_name || result.brand || result.category)
     setDetectedProduct({
       brand: result.brand ?? null,
       category: result.category ?? null,
-      confidence: result.confidence ?? null,
-      name: null,
+      confidence: result.confidence ? String(result.confidence) : null,
+      name: result.product_name ?? null,
       loading: hasProductClues,
       error: null
     })
@@ -159,7 +159,7 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
     setCoupons([])
 
     if (hasProductClues) {
-      fetchDetectedProductName(result.brand ?? null, result.category ?? null)
+      fetchDetectedProductName(result.product_name ?? null, result.brand ?? null, result.category ?? null)
     }
 
     const querySet = new Set<string>()
@@ -174,8 +174,9 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
       prioritizedQueries.push(trimmed)
     }
 
-    const combinedQuery = [result.brand, result.category].filter(Boolean).join(' ').trim()
+    const combinedQuery = [result.product_name, result.brand, result.category].filter(Boolean).join(' ').trim()
     addQuery(combinedQuery)
+    addQuery(result.product_name)
     addQuery(result.brand)
     addQuery(result.category)
     addQuery(result.searchQuery)
@@ -280,8 +281,8 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
   }, [coupons.length, stopCamera, onExit])
 
   return (
-    <div className="fixed inset-0 z-50 bg-black">
-      <div className="h-full flex flex-col md:flex-row">
+    <div className="fixed inset-0 z-50 bg-black overflow-hidden">
+      <div className="h-[100dvh] flex flex-col md:flex-row">
         {/* Left Panel - Video Feed */}
         <div className="relative flex-1 bg-gray-900">
           {/* Video Element */}
@@ -300,17 +301,22 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
               <p className="text-xs uppercase tracking-wider text-gray-400 mb-1">
                 Detected Product
               </p>
-              {detectedProduct.loading ? (
+              {detectedProduct.loading && !detectedProduct.name ? (
                 <p className="text-sm text-gray-200">Identifying product...</p>
               ) : (
                 <>
-                  <p className="text-lg font-semibold leading-snug">
-                    {detectedProduct.name ||
-                      [detectedProduct.brand, detectedProduct.category]
-                        .filter(Boolean)
-                        .join(' · ') ||
-                      'No catalog match yet'}
-                  </p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-lg font-semibold leading-snug">
+                      {detectedProduct.name ||
+                        [detectedProduct.brand, detectedProduct.category]
+                          .filter(Boolean)
+                          .join(' · ') ||
+                        'No catalog match yet'}
+                    </p>
+                    {detectedProduct.loading && (
+                      <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white/70" />
+                    )}
+                  </div>
                   <p className="text-sm text-gray-300">
                     {[detectedProduct.brand, detectedProduct.category]
                       .filter(Boolean)
@@ -374,85 +380,88 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
           )}
 
           {/* Control Bar (Bottom) */}
-          <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/90 via-black/50 to-transparent">
-            <div className="flex items-center justify-center gap-4">
-              {/* Manual Capture Button */}
-              <Button
-                size="lg"
-                onClick={handleManualCapture}
-                disabled={isProcessing || !isActive}
-                className="!bg-[#CC0000] hover:!bg-[#AA0000] !text-white font-semibold shadow-lg"
-                style={{
-                  backgroundColor: '#CC0000',
-                  color: 'white',
-                  border: 'none'
-                }}
-              >
-                <Camera className="w-5 h-5 mr-2 text-white" />
-                Scan Now
-              </Button>
+          <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/90 via-black/50 to-transparent">
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-center gap-3">
+                {/* Manual Capture Button */}
+                <Button
+                  size="default"
+                  onClick={handleManualCapture}
+                  disabled={isProcessing || !isActive}
+                  className="!bg-[#CC0000] hover:!bg-[#AA0000] !text-white font-semibold shadow-lg flex-1 max-w-[140px]"
+                  style={{
+                    backgroundColor: '#CC0000',
+                    color: 'white',
+                    border: 'none'
+                  }}
+                >
+                  <Camera className="w-4 h-4 mr-2 text-white" />
+                  Scan
+                </Button>
 
-              {/* Auto-Scan Toggle */}
-              <Button
-                size="lg"
-                variant="outline"
-                onClick={() => {
-                  if (!isAutoScan) {
-                    const confirmed = window.confirm(
-                      'Auto-scan captures frames every few seconds and may increase processing costs. Do you want to resume auto-scan?'
-                    )
-                    if (!confirmed) {
-                      return
+                {/* Auto-Scan Toggle */}
+                <Button
+                  size="default"
+                  variant="outline"
+                  onClick={() => {
+                    if (!isAutoScan) {
+                      const confirmed = window.confirm(
+                        'Auto-scan captures frames every few seconds and may increase processing costs. Do you want to resume auto-scan?'
+                      )
+                      if (!confirmed) {
+                        return
+                      }
                     }
-                  }
-                  setIsAutoScan(prev => !prev)
-                }}
-                className="!border-white/50 !text-white hover:!bg-white/20 font-semibold"
-                style={{
-                  borderColor: 'rgba(255, 255, 255, 0.5)',
-                  color: 'white',
-                  backgroundColor: 'transparent'
-                }}
-              >
-                {isAutoScan ? (
-                  <>
-                    <Pause className="w-5 h-5 mr-2 text-white" />
-                    Pause Auto-Scan
-                  </>
-                ) : (
-                  <>
-                    <Play className="w-5 h-5 mr-2 text-white" />
-                    Resume Auto-Scan
-                  </>
-                )}
-              </Button>
+                    setIsAutoScan(prev => !prev)
+                  }}
+                  className="!border-white/50 !text-white hover:!bg-white/20 font-semibold flex-1 max-w-[140px]"
+                  style={{
+                    borderColor: 'rgba(255, 255, 255, 0.5)',
+                    color: 'white',
+                    backgroundColor: 'transparent'
+                  }}
+                >
+                  {isAutoScan ? (
+                    <>
+                      <Pause className="w-4 h-4 mr-2 text-white" />
+                      Pause
+                    </>
+                  ) : (
+                    <>
+                      <Play className="w-4 h-4 mr-2 text-white" />
+                      Auto-Scan
+                    </>
+                  )}
+                </Button>
+
+                {/* Switch Camera (Mobile) */}
+                <Button
+                  size="icon"
+                  variant="outline"
+                  onClick={switchCamera}
+                  disabled={!isActive}
+                  className="!border-white/50 !text-white hover:!bg-white/20 font-semibold w-10 h-10"
+                  style={{
+                    borderColor: 'rgba(255, 255, 255, 0.5)',
+                    color: 'white',
+                    backgroundColor: 'transparent'
+                  }}
+                >
+                  <Repeat className="w-4 h-4 text-white" />
+                </Button>
+              </div>
+              
               {!isAutoScan && (
-                <p className="text-xs text-gray-300 text-center w-full">
-                  Auto-scan is paused to save processing costs. Resume only when needed.
+                <p className="text-[10px] text-gray-400 text-center w-full">
+                  Auto-scan paused
                 </p>
               )}
-
-              {/* Switch Camera (Mobile) */}
-              <Button
-                size="lg"
-                variant="outline"
-                onClick={switchCamera}
-                disabled={!isActive}
-                className="!border-white/50 !text-white hover:!bg-white/20 hidden sm:flex font-semibold"
-                style={{
-                  borderColor: 'rgba(255, 255, 255, 0.5)',
-                  color: 'white',
-                  backgroundColor: 'transparent'
-                }}
-              >
-                <Repeat className="w-5 h-5 text-white" />
-              </Button>
             </div>
           </div>
         </div>
 
         {/* Right Panel - Coupon Results */}
-        <div className="w-full md:w-[400px] bg-gray-950 border-l border-gray-800 flex flex-col">
+        <div className="w-full md:w-[400px] h-[45vh] md:h-full bg-gray-950 border-l border-gray-800 flex flex-col z-50 pb-[env(safe-area-inset-bottom)]">
           {/* Header */}
           <div className="flex items-center justify-between p-4 border-b border-gray-800">
             <div>
@@ -477,7 +486,7 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
           </div>
 
           {/* Coupon List */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-6">
+          <div className="flex-1 overflow-y-auto overscroll-y-contain p-4 space-y-6 min-h-0">
             {coupons.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full text-center px-4 py-12">
                 <Camera className="w-16 h-16 text-gray-600 mb-4" />
@@ -544,7 +553,6 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
                 variant="outline"
                 onClick={() => {
                   setCoupons([])
-                  setDetectedProducts(new Set())
                   setDetectedProduct(null)
                 }}
                 className="w-full !border-gray-600 !text-gray-200 hover:!bg-gray-800 font-semibold"

@@ -9,6 +9,7 @@ interface FrameCaptureState {
 }
 
 interface ImageExtractionResult {
+  product_name: string | null
   brand: string | null
   category: string | null
   confidence: number
@@ -56,21 +57,21 @@ export function useFrameCapture(): UseFrameCaptureReturn {
         throw new Error('Failed to get canvas context')
       }
 
-      // Set canvas dimensions to match video (or smaller for optimization)
-      const width = Math.min(videoElement.videoWidth, 1280)
-      const height = Math.min(videoElement.videoHeight, 720)
+      // Set canvas dimensions to match video (higher resolution for better OCR)
+      const width = Math.min(videoElement.videoWidth, 1920)
+      const height = Math.min(videoElement.videoHeight, 1080)
       canvas.width = width
       canvas.height = height
 
       // Draw current video frame to canvas
       ctx.drawImage(videoElement, 0, 0, width, height)
 
-      // Convert canvas to blob
+      // Convert canvas to blob (higher quality for better text recognition)
       const blob = await new Promise<Blob | null>((resolve) => {
         canvas.toBlob(
           (blob) => resolve(blob),
           'image/jpeg',
-          0.85 // Quality: 85%
+          0.95 // Quality: 95% (increased from 85% for better accuracy)
         )
       })
 
@@ -79,7 +80,7 @@ export function useFrameCapture(): UseFrameCaptureReturn {
       }
 
       // Store preview (optional - for debugging)
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.85)
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.95)
       setLastCapturedImage(dataUrl)
 
       console.log(`Frame captured: ${width}x${height}, ${(blob.size / 1024).toFixed(1)}KB`)

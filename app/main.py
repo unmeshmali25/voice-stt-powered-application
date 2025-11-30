@@ -1416,20 +1416,45 @@ async def image_extract(
                     "content": [
                         {
                             "type": "text",
-                            "text": """Analyze this product image and extract information. Return ONLY valid JSON in this exact format:
+                            "text": """Analyze this product image and extract DETAILED information. Focus on distinguishing product variants.
+
+Return ONLY valid JSON:
 {
+  "product_name": "Specific Product Name with Variant" or null,
   "brand": "Brand Name" or null,
   "category": "Product Category" or null,
+  "variant_details": {
+    "form_factor": "gummies|tablets|capsules|liquid|powder|cream|etc" or null,
+    "primary_ingredient": "B12|Vitamin C|Vitamin D|etc" or null,
+    "dosage": "500mg|1000mcg|etc" or null,
+    "flavor": "orange|cherry|etc" or null,
+    "count": "60ct|120ct|etc" or null
+  },
+  "visible_text": ["All visible text on package"],
   "confidence": "high" or "medium" or "low"
 }
 
-Guidelines:
-- brand: Extract visible brand name/logo (e.g., "Neutrogena", "Dove", "Colgate")
-- category: Identify product category (e.g., "skincare", "vitamins", "beverages", "snacks", "personal care")
-- confidence:
-  * "high" if brand and category are clearly visible
-  * "medium" if only one is clear or both are somewhat visible
-  * "low" if image is unclear or no product visible
+CRITICAL INSTRUCTIONS:
+1. product_name: Must include variant details. Examples:
+   - "Vitamin B12 Gummies" (NOT just "Vitamin Gummies")
+   - "Extra Strength Tylenol 500mg" (NOT just "Tylenol")
+   - "Neutrogena Hydro Boost Gel Cream" (NOT just "Neutrogena Cream")
+
+2. variant_details: Extract ALL visible variant identifiers:
+   - form_factor: Physical form (gummies, tablets, capsules, liquid, etc.)
+   - primary_ingredient: Main active ingredient or vitamin type (B12, Vitamin C, D3, etc.)
+   - dosage: Strength/amount (500mg, 1000mcg, 50mg, etc.)
+   - flavor: If visible (orange, cherry, strawberry, unflavored, etc.)
+   - count: Package count if visible (60ct, 90ct, 120ct, etc.)
+
+3. visible_text: Transcribe ALL readable text from the package as a list
+
+4. confidence:
+   - "high": Product name + brand + 2+ variant details clearly visible
+   - "medium": Product name + brand visible, some variant details unclear
+   - "low": Missing critical information or image unclear
+
+5. If multiple products visible, focus on the most prominent/centered one
 
 Return ONLY the JSON object, no additional text."""
                         },
@@ -1442,8 +1467,8 @@ Return ONLY the JSON object, no additional text."""
                     ]
                 }
             ],
-            max_tokens=200,
-            temperature=0.1
+            max_tokens=400,  # Increased from 200 to allow detailed variant extraction
+            temperature=0.0  # Fully deterministic (changed from 0.1)
         )
 
         t_api_end = time.time()
@@ -1454,38 +1479,55 @@ Return ONLY the JSON object, no additional text."""
 
         # Parse JSON response
         try:
-            # Try to extract JSON from response (in case there's extra text)
-            import re
-            json_match = re.search(r'\{[^}]+\}', raw_content, re.DOTALL)
-            if json_match:
-                parsed = json.loads(json_match.group(0))
+            # Robust JSON extraction: Find first '{' and last '}'
+            start_idx = raw_content.find('{')
+            end_idx = raw_content.rfind('}')
+            
+            if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                json_str = raw_content[start_idx:end_idx+1]
+                parsed = json.loads(json_str)
             else:
-                parsed = json.loads(raw_content)
+                parsed = json.loads(raw_content.strip())
 
+            product_name = parsed.get("product_name")
             brand = parsed.get("brand")
             category = parsed.get("category")
+            variant_details = parsed.get("variant_details", {})
+            visible_text = parsed.get("visible_text", [])
             confidence = parsed.get("confidence", "low")
 
             # Validate confidence value
             if confidence not in ["high", "medium", "low"]:
                 confidence = "low"
 
-            # Create search query
+            # Create search query including variant details
             search_parts = []
             if brand:
                 search_parts.append(str(brand))
+            if product_name:
+                search_parts.append(str(product_name))
             if category:
                 search_parts.append(str(category))
 
+            # Add variant details to search query for better matching
+            if variant_details:
+                if variant_details.get("primary_ingredient"):
+                    search_parts.append(str(variant_details["primary_ingredient"]))
+                if variant_details.get("form_factor"):
+                    search_parts.append(str(variant_details["form_factor"]))
+
             search_query = " ".join(search_parts) if search_parts else ""
 
-            logger.info(f"Extracted: brand={brand}, category={category}, confidence={confidence}, query={search_query}")
+            logger.info(f"Extracted: product={product_name}, brand={brand}, category={category}, variant_details={variant_details}, confidence={confidence}, query={search_query}")
 
         except (json.JSONDecodeError, KeyError, AttributeError) as parse_error:
             logger.warning(f"Failed to parse Vision API response: {parse_error}. Raw: {raw_content}")
             # Return low confidence result
+            product_name = None
             brand = None
             category = None
+            variant_details = {}
+            visible_text = []
             confidence = "low"
             search_query = ""
 
@@ -1497,8 +1539,11 @@ Return ONLY the JSON object, no additional text."""
             logger.info(f"Image extraction completed for user {user_id}: {total_duration_ms}ms total (API: {api_duration_ms}ms)")
 
         return JSONResponse({
+            "product_name": product_name,
             "brand": brand,
             "category": category,
+            "variant_details": variant_details,
+            "visible_text": visible_text,
             "confidence": confidence,
             "searchQuery": search_query,
             "duration_ms": total_duration_ms,
