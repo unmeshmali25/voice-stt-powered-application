@@ -1479,9 +1479,15 @@ Return ONLY the JSON object, no additional text."""
 
         # Parse JSON response
         try:
-            # The prompt instructs "Return ONLY the JSON object"
-            # Parse directly - handles nested JSON correctly
-            parsed = json.loads(raw_content.strip())
+            # Robust JSON extraction: Find first '{' and last '}'
+            start_idx = raw_content.find('{')
+            end_idx = raw_content.rfind('}')
+            
+            if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                json_str = raw_content[start_idx:end_idx+1]
+                parsed = json.loads(json_str)
+            else:
+                parsed = json.loads(raw_content.strip())
 
             product_name = parsed.get("product_name")
             brand = parsed.get("brand")
