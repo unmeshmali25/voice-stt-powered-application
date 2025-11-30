@@ -1,4 +1,4 @@
--- PostgreSQL Schema for VoiceOffers Coupon Platform
+-- PostgreSQL Schema for MultiModal AI Retail App
 -- Full-text search with tsvector and Supabase authentication
 
 -- Enable pg_trgm extension for fuzzy text search

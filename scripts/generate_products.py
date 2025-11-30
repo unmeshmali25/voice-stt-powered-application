@@ -235,6 +235,7 @@ if __name__ == "__main__":
 
     # Write to a temporary CSV file
     headers = ["name", "description", "image_filename", "price", "rating", "review_count", "category", "brand", "promo_text", "in_stock"]
+    # TODO Stage 4: Update path after folder rename (VoiceOffers → multi_modal_retail)
     output_file = "/Users/unmeshmali/Downloads/Unmesh/VoiceOffers/data/new_products_generated.csv"
 
     with open(output_file, 'w', newline='', encoding='utf-8') as f:

@@ -1,6 +1,6 @@
-# VoiceOffers
+# MultiModal AI Retail App
 
-VoiceOffers is an AI-powered search platform that helps retail customers discover relevant coupons and products using natural language and multi-modal inputs.
+MultiModal AI Retail App is an AI-powered search platform that helps retail customers discover relevant coupons and products using natural language and multi-modal inputs.
 
 ## Architecture
 
@@ -8,7 +8,7 @@ The application follows a modern 3-tier architecture:
 
 ```
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║                          🎯 VoiceOffers Data Flow                            ║
+║                    🎯 MultiModal AI Retail App Data Flow                     ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
     👤 USER                                                     ☁️  CLOUD SERVICES
@@ -94,13 +94,13 @@ Development:
 └── Supabase dev project
 
 Staging:
-├── Vercel Preview (voiceoffers-staging.vercel.app)
-├── Railway Staging (voiceoffers-staging.up.railway.app)
+├── Vercel Preview (voiceoffers-staging.vercel.app) <!-- TODO Stage 3: Update to multi-modal-retail-staging.vercel.app -->
+├── Railway Staging (voiceoffers-staging.up.railway.app) <!-- TODO Stage 3: Update URL -->
 └── Supabase Staging Project
 
 Production:
-├── Vercel Production (voiceoffers.vercel.app)
-├── Railway Production (voiceoffers-prod.up.railway.app)
+├── Vercel Production (voiceoffers.vercel.app) <!-- TODO Stage 3: Update to multi-modal-retail.vercel.app -->
+├── Railway Production (voiceoffers-prod.up.railway.app) <!-- TODO Stage 3: Update URL -->
 └── Supabase Production Project
 ```
 
@@ -132,7 +132,8 @@ We use a Git-based workflow with three environments:
 *   **Database**: Connects to Supabase `dev` project.
 *   **Flow**: Create feature branches, test locally, and push to GitHub.
 
-### 2. Staging (`voiceoffers-staging.vercel.app`)
+### 2. Staging
+<!-- TODO Stage 3: Update URL to multi-modal-retail-staging.vercel.app -->
 *   **Trigger**: Push/Merge to `staging` branch.
 *   **CI/CD**: GitHub Actions automatically deploys:
     *   Backend to Railway (Staging service)
@@ -140,7 +141,8 @@ We use a Git-based workflow with three environments:
 *   **Database**: Connects to Supabase `staging` project.
 *   **Purpose**: Integration testing and feature verification.
 
-### 3. Production (`voiceoffers.vercel.app`)
+### 3. Production
+<!-- TODO Stage 3: Update URL to multi-modal-retail.vercel.app -->
 *   **Trigger**: Merge `staging` to `main` branch.
 *   **CI/CD**: GitHub Actions deploys to production environments.
 *   **Database**: Connects to Supabase `production` project.

@@ -1,4 +1,4 @@
--- Staging Seed Data for VoiceOffers
+-- Staging Seed Data for MultiModal AI Retail App
 -- This file contains realistic test data for staging environment testing
 -- More coupons than dev, simulates production-like data
 -- Run after postgres_schema.sql

@@ -1,6 +1,6 @@
-# VoiceOffers Frontend
+# MultiModal AI Retail App - Frontend
 
-Modern React + TypeScript frontend for the VoiceOffers application, built with Vite and shadcn/ui components.
+Modern React + TypeScript frontend for the MultiModal AI Retail App, built with Vite and shadcn/ui components.
 
 ## Tech Stack
 

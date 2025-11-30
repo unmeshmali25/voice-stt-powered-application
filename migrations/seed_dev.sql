@@ -1,4 +1,4 @@
--- Development Seed Data for VoiceOffers
+-- Development Seed Data for MultiModal AI Retail App
 -- This file contains sample coupons for local testing
 -- Run after postgres_schema.sql
 

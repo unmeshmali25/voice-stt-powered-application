@@ -114,7 +114,7 @@ curl https://[your-backend].railway.app/api/products/search?query=skincare
 
 ### Frontend Verification:
 
-1. Visit: https://voiceoffers.vercel.app
+1. Visit: https://voiceoffers.vercel.app <!-- TODO Stage 3: Update URL -->
 2. Verify 3-column layout loads (Products | Frontstore | Category)
 3. Test voice search
 4. Check browser console for errors
