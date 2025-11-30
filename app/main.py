@@ -1418,17 +1418,19 @@ async def image_extract(
                             "type": "text",
                             "text": """Analyze this product image and extract information. Return ONLY valid JSON in this exact format:
 {
+  "product_name": "Specific Product Name" or null,
   "brand": "Brand Name" or null,
   "category": "Product Category" or null,
   "confidence": "high" or "medium" or "low"
 }
 
 Guidelines:
-- brand: Extract visible brand name/logo (e.g., "Neutrogena", "Dove", "Colgate")
-- category: Identify product category (e.g., "skincare", "vitamins", "beverages", "snacks", "personal care")
+- product_name: Extract the specific product name (e.g., "Vitamin B12 Gummies", "Extra Strength Tylenol", "Diet Coke"). Be as specific as possible to distinguish from other products of the same brand.
+- brand: Extract visible brand name/logo (e.g., "Nature Made", "Tylenol", "Coca-Cola")
+- category: Identify product category (e.g., "vitamins", "pain relief", "beverages")
 - confidence:
-  * "high" if brand and category are clearly visible
-  * "medium" if only one is clear or both are somewhat visible
+  * "high" if product name, brand and category are clearly visible
+  * "medium" if some details are missing but product is identifiable
   * "low" if image is unclear or no product visible
 
 Return ONLY the JSON object, no additional text."""
@@ -1462,6 +1464,7 @@ Return ONLY the JSON object, no additional text."""
             else:
                 parsed = json.loads(raw_content)
 
+            product_name = parsed.get("product_name")
             brand = parsed.get("brand")
             category = parsed.get("category")
             confidence = parsed.get("confidence", "low")
@@ -1474,16 +1477,19 @@ Return ONLY the JSON object, no additional text."""
             search_parts = []
             if brand:
                 search_parts.append(str(brand))
+            if product_name:
+                search_parts.append(str(product_name))
             if category:
                 search_parts.append(str(category))
 
             search_query = " ".join(search_parts) if search_parts else ""
 
-            logger.info(f"Extracted: brand={brand}, category={category}, confidence={confidence}, query={search_query}")
+            logger.info(f"Extracted: product={product_name}, brand={brand}, category={category}, confidence={confidence}, query={search_query}")
 
         except (json.JSONDecodeError, KeyError, AttributeError) as parse_error:
             logger.warning(f"Failed to parse Vision API response: {parse_error}. Raw: {raw_content}")
             # Return low confidence result
+            product_name = None
             brand = None
             category = None
             confidence = "low"
@@ -1497,6 +1503,7 @@ Return ONLY the JSON object, no additional text."""
             logger.info(f"Image extraction completed for user {user_id}: {total_duration_ms}ms total (API: {api_duration_ms}ms)")
 
         return JSONResponse({
+            "product_name": product_name,
             "brand": brand,
             "category": category,
             "confidence": confidence,

@@ -77,8 +77,8 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
     }
   }, [stopCamera, clearResult])
 
-  const fetchDetectedProductName = useCallback(async (brand: string | null, category: string | null) => {
-    const queryParts = [brand, category]
+  const fetchDetectedProductName = useCallback(async (productName: string | null, brand: string | null, category: string | null) => {
+    const queryParts = [productName, brand, category]
       .filter((part): part is string => !!part && part.trim().length > 0)
       .map(part => part.trim())
 
@@ -110,7 +110,7 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
         prev
           ? {
               ...prev,
-              name: topProduct?.name ?? null,
+              name: topProduct?.name ?? prev.name ?? null,
               brand: prev.brand ?? topProduct?.brand ?? null,
               loading: false
             }
@@ -146,12 +146,12 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
       return
     }
 
-    const hasProductClues = Boolean(result.brand || result.category)
+    const hasProductClues = Boolean(result.product_name || result.brand || result.category)
     setDetectedProduct({
       brand: result.brand ?? null,
       category: result.category ?? null,
       confidence: result.confidence ? String(result.confidence) : null,
-      name: null,
+      name: result.product_name ?? null,
       loading: hasProductClues,
       error: null
     })
@@ -159,7 +159,7 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
     setCoupons([])
 
     if (hasProductClues) {
-      fetchDetectedProductName(result.brand ?? null, result.category ?? null)
+      fetchDetectedProductName(result.product_name ?? null, result.brand ?? null, result.category ?? null)
     }
 
     const querySet = new Set<string>()
@@ -174,8 +174,9 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
       prioritizedQueries.push(trimmed)
     }
 
-    const combinedQuery = [result.brand, result.category].filter(Boolean).join(' ').trim()
+    const combinedQuery = [result.product_name, result.brand, result.category].filter(Boolean).join(' ').trim()
     addQuery(combinedQuery)
+    addQuery(result.product_name)
     addQuery(result.brand)
     addQuery(result.category)
     addQuery(result.searchQuery)
@@ -300,17 +301,22 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
               <p className="text-xs uppercase tracking-wider text-gray-400 mb-1">
                 Detected Product
               </p>
-              {detectedProduct.loading ? (
+              {detectedProduct.loading && !detectedProduct.name ? (
                 <p className="text-sm text-gray-200">Identifying product...</p>
               ) : (
                 <>
-                  <p className="text-lg font-semibold leading-snug">
-                    {detectedProduct.name ||
-                      [detectedProduct.brand, detectedProduct.category]
-                        .filter(Boolean)
-                        .join(' · ') ||
-                      'No catalog match yet'}
-                  </p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-lg font-semibold leading-snug">
+                      {detectedProduct.name ||
+                        [detectedProduct.brand, detectedProduct.category]
+                          .filter(Boolean)
+                          .join(' · ') ||
+                        'No catalog match yet'}
+                    </p>
+                    {detectedProduct.loading && (
+                      <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white/70" />
+                    )}
+                  </div>
                   <p className="text-sm text-gray-300">
                     {[detectedProduct.brand, detectedProduct.category]
                       .filter(Boolean)

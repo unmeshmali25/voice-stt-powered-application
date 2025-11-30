@@ -9,6 +9,7 @@ interface FrameCaptureState {
 }
 
 interface ImageExtractionResult {
+  product_name: string | null
   brand: string | null
   category: string | null
   confidence: number
