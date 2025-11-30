@@ -33,7 +33,7 @@ export function MobileLayout() {
 
   const [activeTab, setActiveTab] = useState<'shop' | 'wallet' | 'scan'>('shop')
   const [searchQuery, setSearchQuery] = useState('')
-  const { isRecording, startRecording, stopRecording } = useVoiceRecording()
+  const { isRecording, startRecording, stopRecording, transcript: voiceTranscript } = useVoiceRecording()
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -51,27 +51,13 @@ export function MobileLayout() {
     }
   }
 
-  // Sync voice transcript to store when it changes
-  // We need to listen to the transcript from useVoiceRecording and update the store
-  // However, useVoiceRecording returns 'transcript' which is the live transcript.
-  // We should update the search query when recording stops or when transcript updates.
-  // For simplicity, let's just update the search query as the user speaks.
-  // Note: In a real app, we might want to wait for silence or a stop command.
-  
-  // Let's assume we want to update the search query when the transcript changes
-  // But we need to be careful not to trigger too many searches.
-  // The original VoiceSidebar calls onTranscriptChange.
-  
-  // Let's just use the transcript from the hook to update the input value
-  // and trigger search when recording stops.
-  
-  // Actually, let's just use the transcript directly.
-  const { transcript: voiceTranscript } = useVoiceRecording()
-  
-  // If voice transcript changes, update search query
-  if (voiceTranscript && voiceTranscript !== searchQuery && isRecording) {
-    setSearchQuery(voiceTranscript)
-  }
+  // Sync voice transcript to store and local input
+  useEffect(() => {
+    if (voiceTranscript) {
+      setSearchQuery(voiceTranscript)
+      handleTranscriptChange(voiceTranscript)
+    }
+  }, [voiceTranscript, handleTranscriptChange])
 
   return (
     <div className="flex flex-col h-screen bg-background">
