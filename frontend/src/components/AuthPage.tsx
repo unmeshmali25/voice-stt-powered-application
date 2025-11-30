@@ -79,8 +79,8 @@ export function AuthPage() {
           </CardTitle>
           <CardDescription>
             {isSignUp
-              ? 'Create an account to access VoiceOffers'
-              : 'Sign in to your VoiceOffers account'}
+              ? 'Create an account to access MultiModal AI Retail App'
+              : 'Sign in to your MultiModal AI Retail App account'}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">

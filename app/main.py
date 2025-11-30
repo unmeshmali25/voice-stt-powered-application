@@ -1,5 +1,5 @@
 """
-VoiceOffers Coupon Platform - FastAPI Backend
+MultiModal AI Retail App - FastAPI Backend
 
 Serves:
 - GET /           : frontend index
@@ -142,13 +142,13 @@ if SUPABASE_URL and SUPABASE_KEY:
 
 # --- App ---
 logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper(), logging.INFO))
-logger = logging.getLogger("voiceoffers")
+logger = logging.getLogger("multi_modal_retail")
 
 # Rate limiter configuration
 limiter = Limiter(key_func=get_remote_address)
 
 app = FastAPI(
-    title="VoiceOffers Coupon Platform",
+    title="MultiModal AI Retail App",
     version="1.0.0",
     docs_url=None,
     redoc_url=None,
@@ -172,17 +172,19 @@ def get_cors_origins():
         ]
     elif IS_STAGING:
         # Staging: Allow Vercel preview URLs. Add base domain just in case.
+        # TODO Stage 3: Update URLs after infrastructure setup
         return [
             FRONTEND_URL,
             "https://voice-stt-powered-application-staging.vercel.app",
-            "https://voiceoffers-staging.vercel.app",
+            "https://voiceoffers-staging.vercel.app",  # TODO: Update to multi-modal-retail-staging.vercel.app
         ]
     elif IS_PROD:
         # Production: Only allow production domain
+        # TODO Stage 3: Update URLs after infrastructure setup
         return [
             FRONTEND_URL,
-            "https://voiceoffers.vercel.app",
-            "https://voiceoffers.com"  # Add your custom domain if applicable
+            "https://voiceoffers.vercel.app",  # TODO: Update to multi-modal-retail.vercel.app
+            "https://voiceoffers.com"  # TODO: Update to custom domain if applicable
         ]
     else:
         # Fallback to localhost
@@ -198,6 +200,7 @@ if IS_STAGING or IS_PROD:
     # Allow both preview deployments (voice-stt-powered-application-<id>.vercel.app)
     # and the root domain (voice-stt-powered-application.vercel.app), plus voiceoffers.* on vercel
     # It also handles staging URLs by making '-staging' optional.
+    # TODO Stage 3: Update pattern to multi-modal-retail after infrastructure setup
     cors_regex = r'https://(voice-stt-powered-application(-staging)?(-[a-z0-9]+)?|voiceoffers.*)\.vercel\.app'
     logger.info(f"CORS regex pattern: {cors_regex}")
 
@@ -415,11 +418,11 @@ async def root():
       <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <title>VoiceOffers</title>
+        <title>MultiModal AI Retail App</title>
         <style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding:2rem} .muted{color:#666}</style>
       </head>
       <body>
-        <h1>VoiceOffers Coupon Platform</h1>
+        <h1>MultiModal AI Retail App</h1>
         <p class="muted">Frontend not found. Build the frontend or visit <code>/static/</code>.</p>
       </body>
     </html>
@@ -658,7 +661,7 @@ async def stt(
             api_key=api_key,
             default_headers={
                 "X-Environment": ENV,
-                "X-User-Agent": f"VoiceOffers/{app.version}/{ENV}"
+                "X-User-Agent": f"MultiModalAIRetail/{app.version}/{ENV}"
             }
         )
 
@@ -878,7 +881,7 @@ async def coupon_search(
                 api_key=api_key,
                 default_headers={
                     "X-Environment": ENV,
-                    "X-User-Agent": f"VoiceOffers/{app.version}/{ENV}"
+                    "X-User-Agent": f"MultiModalAIRetail/{app.version}/{ENV}"
                 }
             )
             resp = client.embeddings.create(model=emb_model, input=texts)

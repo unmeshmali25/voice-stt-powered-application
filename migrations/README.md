@@ -1,6 +1,6 @@
 # Database Migrations
 
-This directory contains SQL migrations for the VoiceOffers platform database.
+This directory contains SQL migrations for the MultiModal AI Retail App database.
 
 ## Files
 

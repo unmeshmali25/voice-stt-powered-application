@@ -1,6 +1,8 @@
-# VoiceOffers Deployment Guide
+# MultiModal AI Retail App - Deployment Guide
 
-This guide covers deploying VoiceOffers to dev, staging, and production environments using **Vercel** (frontend), **Railway** (backend), and **Supabase** (database).
+This guide covers deploying MultiModal AI Retail App to dev, staging, and production environments using **Vercel** (frontend), **Railway** (backend), and **Supabase** (database).
+
+<!-- TODO Stage 3: Update all URL references after infrastructure setup -->
 
 ---
 
@@ -39,7 +41,7 @@ This guide covers deploying VoiceOffers to dev, staging, and production environm
 
 Before deploying, ensure you have:
 
-1. **GitHub account** with VoiceOffers repository
+1. **GitHub account** with MultiModal AI Retail App repository
 2. **Vercel account** (free) - [https://vercel.com/signup](https://vercel.com/signup)
 3. **Railway account** (free tier available) - [https://railway.app/](https://railway.app/)
 4. **Supabase account** (free) - [https://supabase.com/](https://supabase.com/)
