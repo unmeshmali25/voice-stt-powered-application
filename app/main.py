@@ -1479,13 +1479,9 @@ Return ONLY the JSON object, no additional text."""
 
         # Parse JSON response
         try:
-            # Try to extract JSON from response (in case there's extra text)
-            import re
-            json_match = re.search(r'\{[^}]+\}', raw_content, re.DOTALL)
-            if json_match:
-                parsed = json.loads(json_match.group(0))
-            else:
-                parsed = json.loads(raw_content)
+            # The prompt instructs "Return ONLY the JSON object"
+            # Parse directly - handles nested JSON correctly
+            parsed = json.loads(raw_content.strip())
 
             product_name = parsed.get("product_name")
             brand = parsed.get("brand")
