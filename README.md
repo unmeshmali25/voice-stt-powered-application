@@ -114,9 +114,17 @@ Production:
 
 ## Screenshots
 
+### Signup Screen
+![Signup Screen](./screenshots/signup.png)
+*Welcome/signup interface guiding new users to onboard easily.*
+
 ### Home Screen
-![Home Screen](./screenshots/home.png)
+![Home Screen](./screenshots/homepage.png)
 *AI-powered search interface with real-time transcription.*
+
+### AR Mode
+![AR Mode](./screenshots/armode.png)
+*Augmented Reality product/offer discovery experience.*
 
 ### Product Results
 ![Product Results](./screenshots/products.png)
