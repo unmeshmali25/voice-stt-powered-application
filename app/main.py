@@ -17,6 +17,7 @@ import json
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from decimal import Decimal
+from uuid import UUID
 from urllib.parse import urlparse, urlunparse, quote_plus, parse_qsl, urlencode
 import socket
 from functools import wraps
@@ -1331,96 +1332,6 @@ async def list_products(
         )
 
 
-# --- B-6: GET /api/products/{product_id} - Get single product ---
-@app.get("/api/products/{product_id}")
-@limiter.limit("60/minute")
-async def get_product(
-    request: Request,
-    product_id: str,
-    user: Dict[str, Any] = Depends(verify_token),
-    db: Session = Depends(get_db)
-) -> JSONResponse:
-    """
-    B-6: Get single product with inventory at user's selected store.
-    Returns: { "product": {...}, "inventory": { available: int } | null }
-    """
-    user_id = user["user_id"]
-    logger.info(f"User {user_id} getting product {product_id}")
-
-    try:
-        # Get product details
-        result = db.execute(
-            text("""
-                SELECT id, name, description, image_url, price, rating, review_count, category, brand, promo_text, in_stock
-                FROM products
-                WHERE id = :product_id
-            """),
-            {"product_id": product_id}
-        )
-        row = result.fetchone()
-
-        if not row:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Product not found: {product_id}"
-            )
-
-        product = {
-            "id": str(row[0]),
-            "name": row[1],
-            "description": row[2],
-            "imageUrl": row[3],
-            "price": float(row[4]) if row[4] else 0.0,
-            "rating": float(row[5]) if row[5] else None,
-            "reviewCount": row[6] or 0,
-            "category": row[7],
-            "brand": row[8],
-            "promoText": row[9],
-            "inStock": row[10]
-        }
-
-        # Get inventory at user's selected store
-        inventory = None
-        store_result = db.execute(
-            text("SELECT selected_store_id FROM user_preferences WHERE user_id = :user_id"),
-            {"user_id": user_id}
-        )
-        store_row = store_result.fetchone()
-
-        if store_row and store_row[0]:
-            store_id = str(store_row[0])
-            inv_result = db.execute(
-                text("""
-                    SELECT si.quantity, s.name
-                    FROM store_inventory si
-                    JOIN stores s ON si.store_id = s.id
-                    WHERE si.store_id = :store_id AND si.product_id = :product_id
-                """),
-                {"store_id": store_id, "product_id": product_id}
-            )
-            inv_row = inv_result.fetchone()
-            if inv_row:
-                inventory = {
-                    "available": inv_row[0] or 0,
-                    "store_name": inv_row[1]
-                }
-
-        logger.info(f"Returning product: {product['name']}")
-        return JSONResponse({
-            "product": product,
-            "inventory": inventory
-        }, status_code=200)
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception(f"Failed to get product {product_id}: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get product: {str(e)}"
-        )
-
-
 @app.get("/api/products/recommendations")
 @limiter.limit("60/minute")
 async def product_recommendations(
@@ -1520,6 +1431,106 @@ async def product_recommendations(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get recommendations: {str(e)}"
         )
+
+
+# --- B-6: GET /api/products/{product_id} - Get single product ---
+@app.get("/api/products/{product_id}")
+@limiter.limit("60/minute")
+async def get_product(
+    request: Request,
+    product_id: str,
+    user: Dict[str, Any] = Depends(verify_token),
+    db: Session = Depends(get_db)
+) -> JSONResponse:
+    """
+    B-6: Get single product with inventory at user's selected store.
+    Returns: { "product": {...}, "inventory": { available: int } | null }
+    """
+    user_id = user["user_id"]
+    logger.info(f"User {user_id} getting product {product_id}")
+
+    try:
+        # Validate product_id is UUID
+        try:
+            UUID(product_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Product not found: {product_id}"
+            )
+
+        # Get product details
+        result = db.execute(
+            text("""
+                SELECT id, name, description, image_url, price, rating, review_count, category, brand, promo_text, in_stock
+                FROM products
+                WHERE id = :product_id
+            """),
+            {"product_id": product_id}
+        )
+        row = result.fetchone()
+
+        if not row:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Product not found: {product_id}"
+            )
+
+        product = {
+            "id": str(row[0]),
+            "name": row[1],
+            "description": row[2],
+            "imageUrl": row[3],
+            "price": float(row[4]) if row[4] else 0.0,
+            "rating": float(row[5]) if row[5] else None,
+            "reviewCount": row[6] or 0,
+            "category": row[7],
+            "brand": row[8],
+            "promoText": row[9],
+            "inStock": row[10]
+        }
+
+        # Get inventory at user's selected store
+        inventory = None
+        store_result = db.execute(
+            text("SELECT selected_store_id FROM user_preferences WHERE user_id = :user_id"),
+            {"user_id": user_id}
+        )
+        store_row = store_result.fetchone()
+
+        if store_row and store_row[0]:
+            store_id = str(store_row[0])
+            inv_result = db.execute(
+                text("""
+                    SELECT si.quantity, s.name
+                    FROM store_inventory si
+                    JOIN stores s ON si.store_id = s.id
+                    WHERE si.store_id = :store_id AND si.product_id = :product_id
+                """),
+                {"store_id": store_id, "product_id": product_id}
+            )
+            inv_row = inv_result.fetchone()
+            if inv_row:
+                inventory = {
+                    "available": inv_row[0] or 0,
+                    "store_name": inv_row[1]
+                }
+
+        logger.info(f"Returning product: {product['name']}")
+        return JSONResponse({
+            "product": product,
+            "inventory": inventory
+        }, status_code=200)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Failed to get product {product_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get product: {str(e)}"
+        )
+
 
 
 @app.get("/api/coupons/wallet")

@@ -17,6 +17,7 @@ B-22: Coupon stacking logic (integrated)
 import logging
 from typing import Dict, Any, List, Optional
 from decimal import Decimal
+from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Query, Header
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
@@ -262,6 +263,15 @@ async def add_to_cart(
     user_id = user["user_id"]
     product_id = request.product_id
     quantity = request.quantity
+
+    # Validate product_id is UUID
+    try:
+        UUID(product_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid product ID format: {product_id}"
+        )
 
     if quantity < 1:
         raise HTTPException(
