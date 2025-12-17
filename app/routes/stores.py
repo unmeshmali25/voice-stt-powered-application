@@ -49,7 +49,7 @@ def set_dependencies(db_dependency, token_dependency):
 
 @router.get("/stores")
 async def list_stores(
-    db: Session = Depends(lambda: get_db())
+    db: Session = Depends(get_db)
 ) -> JSONResponse:
     """
     B-1: List all available stores.
@@ -88,7 +88,7 @@ async def list_stores(
 @router.get("/stores/{store_id}")
 async def get_store(
     store_id: str,
-    db: Session = Depends(lambda: get_db())
+    db: Session = Depends(get_db)
 ) -> JSONResponse:
     """
     B-2: Get single store with inventory summary.
@@ -150,8 +150,8 @@ async def get_store(
 
 @router.get("/user/store")
 async def get_user_store(
-    user: Dict[str, Any] = Depends(lambda: verify_token()),
-    db: Session = Depends(lambda: get_db())
+    user: Dict[str, Any] = Depends(verify_token),
+    db: Session = Depends(get_db)
 ) -> JSONResponse:
     """
     B-4: Get user's selected store.
@@ -196,8 +196,8 @@ async def get_user_store(
 @router.put("/user/store")
 async def set_user_store(
     request: SetStoreRequest,
-    user: Dict[str, Any] = Depends(lambda: verify_token()),
-    db: Session = Depends(lambda: get_db())
+    user: Dict[str, Any] = Depends(verify_token),
+    db: Session = Depends(get_db)
 ) -> JSONResponse:
     """
     B-3: Set user's selected store.

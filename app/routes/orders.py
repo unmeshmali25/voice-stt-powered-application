@@ -75,8 +75,8 @@ def calculate_discount(coupon: Dict, amount: Decimal) -> Decimal:
 
 @router.post("/orders")
 async def create_order(
-    user: Dict[str, Any] = Depends(lambda: verify_token()),
-    db: Session = Depends(lambda: get_db())
+    user: Dict[str, Any] = Depends(verify_token),
+    db: Session = Depends(get_db)
 ) -> JSONResponse:
     """
     B-18: Create order (checkout).
@@ -381,8 +381,8 @@ async def create_order(
 async def get_orders(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    user: Dict[str, Any] = Depends(lambda: verify_token()),
-    db: Session = Depends(lambda: get_db())
+    user: Dict[str, Any] = Depends(verify_token),
+    db: Session = Depends(get_db)
 ) -> JSONResponse:
     """
     B-19: Get user's order history.
@@ -451,8 +451,8 @@ async def get_orders(
 @router.get("/orders/{order_id}")
 async def get_order_detail(
     order_id: str,
-    user: Dict[str, Any] = Depends(lambda: verify_token()),
-    db: Session = Depends(lambda: get_db())
+    user: Dict[str, Any] = Depends(verify_token),
+    db: Session = Depends(get_db)
 ) -> JSONResponse:
     """
     B-20: Get order details with items and applied coupons (receipt view).

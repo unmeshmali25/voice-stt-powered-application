@@ -5,6 +5,46 @@ import { supabase, isSupabaseConfigured } from './supabase'
 // In staging/production: uses actual backend URL
 const API_BASE_URL = import.meta.env.VITE_API_URL || ''
 
+let hasWarnedAboutEmptyApiBaseUrl = false
+
+function warnIfLikelyMisconfiguredApiBaseUrl(requestPath: string) {
+  if (hasWarnedAboutEmptyApiBaseUrl) return
+  if (API_BASE_URL) return
+  if (typeof window === 'undefined') return
+
+  const hostname = window.location?.hostname || ''
+  const isLocalhost =
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '0.0.0.0' ||
+    hostname.endsWith('.local')
+
+  // In production-like environments, a missing VITE_API_URL usually means
+  // the frontend will try to call its own origin for /api/*, which will fail
+  // unless you have a reverse proxy/rewrites configured.
+  if (!isLocalhost && requestPath.startsWith('/api')) {
+    hasWarnedAboutEmptyApiBaseUrl = true
+    // eslint-disable-next-line no-console
+    console.warn(
+      'VITE_API_URL is empty. API requests will be sent to the frontend origin unless you configure Vercel rewrites or set VITE_API_URL.',
+      { requestPath, frontendOrigin: window.location.origin }
+    )
+  }
+}
+
+/**
+ * Unauthenticated fetch helper for public endpoints (e.g. listing stores).
+ * Uses the same base URL resolution as apiFetch but does NOT attach auth headers.
+ */
+export async function publicApiFetch(
+  url: string,
+  options: RequestInit = {}
+): Promise<Response> {
+  warnIfLikelyMisconfiguredApiBaseUrl(url)
+  const fullUrl = url.startsWith('http') ? url : `${API_BASE_URL}${url}`
+  return fetch(fullUrl, options)
+}
+
 /**
  * Authenticated fetch helper that automatically adds Authorization header
  * and handles token refresh and 401 errors
@@ -13,6 +53,7 @@ export async function apiFetch(
   url: string,
   options: RequestInit = {}
 ): Promise<Response> {
+  warnIfLikelyMisconfiguredApiBaseUrl(url)
   if (!isSupabaseConfigured) {
     throw new Error('Supabase is not configured. Please set up your environment variables.')
   }

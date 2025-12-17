@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { apiFetch } from '../lib/api';
+import { apiFetch, publicApiFetch, getApiBaseUrl } from '../lib/api';
 import { Store } from '../types/retail';
 import { useAuth } from '../hooks/useAuth';
 
@@ -21,27 +21,44 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const fetchStores = async () => {
     try {
-      const response = await apiFetch('/stores');
-      if (response.ok) {
-        const data = await response.json();
-        setStores(data.stores);
+      const response = await publicApiFetch('/api/stores');
+      if (!response.ok) {
+        const body = await response.text().catch(() => '');
+        console.error('Failed to fetch stores:', {
+          apiBaseUrl: getApiBaseUrl() || '(empty)',
+          status: response.status,
+          body: body?.slice?.(0, 500) ?? body,
+        });
+        setStores([]);
+        return;
       }
+
+      const data = await response.json();
+      setStores(Array.isArray(data?.stores) ? data.stores : []);
     } catch (error) {
       console.error('Failed to fetch stores:', error);
+      setStores([]);
     }
   };
 
   const fetchUserStore = async () => {
     if (!session) return;
     try {
-      const response = await apiFetch('/user/store');
-      if (response.ok) {
-        const data = await response.json();
-        if (data.has_selection && data.store) {
-          setSelectedStore(data.store);
-        } else {
-          setSelectedStore(null);
-        }
+      const response = await apiFetch('/api/user/store');
+      if (!response.ok) {
+        const body = await response.text().catch(() => '');
+        console.error('Failed to fetch user store:', {
+          status: response.status,
+          body: body?.slice?.(0, 500) ?? body,
+        });
+        return;
+      }
+
+      const data = await response.json();
+      if (data.has_selection && data.store) {
+        setSelectedStore(data.store);
+      } else {
+        setSelectedStore(null);
       }
     } catch (error) {
       console.error('Failed to fetch user store:', error);
@@ -52,18 +69,25 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const setStore = async (storeId: string) => {
     try {
-      const response = await apiFetch('/user/store', {
+      const response = await apiFetch('/api/user/store', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ store_id: storeId }),
       });
 
-      if (response.ok) {
-        const data = await response.json();
-        setSelectedStore(data.store);
-        // If cart was cleared, we might want to trigger a cart refresh here
-        // or let the CartContext handle it via a shared event or re-fetch
+      if (!response.ok) {
+        const body = await response.text().catch(() => '');
+        console.error('Failed to set store:', {
+          status: response.status,
+          body: body?.slice?.(0, 500) ?? body,
+        });
+        throw new Error(`Failed to set store (HTTP ${response.status})`);
       }
+
+      const data = await response.json();
+      setSelectedStore(data.store);
+      // If cart was cleared, we might want to trigger a cart refresh here
+      // or let the CartContext handle it via a shared event or re-fetch
     } catch (error) {
       console.error('Failed to set store:', error);
       throw error;
@@ -72,7 +96,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     fetchStores();
-  }, []);
+  }, [session]);
 
   useEffect(() => {
     if (session) {

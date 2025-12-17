@@ -97,8 +97,8 @@ def check_inventory(db: Session, store_id: str, product_id: str, quantity: int) 
 
 @router.get("/cart")
 async def get_cart(
-    user: Dict[str, Any] = Depends(lambda: verify_token()),
-    db: Session = Depends(lambda: get_db())
+    user: Dict[str, Any] = Depends(verify_token),
+    db: Session = Depends(get_db)
 ) -> JSONResponse:
     """
     B-8: Get user's cart items with product details and selected coupons.
@@ -237,8 +237,8 @@ async def get_cart(
 @router.post("/cart/items")
 async def add_to_cart(
     request: AddToCartRequest,
-    user: Dict[str, Any] = Depends(lambda: verify_token()),
-    db: Session = Depends(lambda: get_db())
+    user: Dict[str, Any] = Depends(verify_token),
+    db: Session = Depends(get_db)
 ) -> JSONResponse:
     """
     B-9: Add item to cart.
@@ -346,8 +346,8 @@ async def add_to_cart(
 async def update_cart_item(
     item_id: str,
     request: UpdateCartItemRequest,
-    user: Dict[str, Any] = Depends(lambda: verify_token()),
-    db: Session = Depends(lambda: get_db())
+    user: Dict[str, Any] = Depends(verify_token),
+    db: Session = Depends(get_db)
 ) -> JSONResponse:
     """
     B-10: Update cart item quantity.
@@ -442,8 +442,8 @@ async def update_cart_item(
 @router.delete("/cart/items/{item_id}")
 async def remove_cart_item(
     item_id: str,
-    user: Dict[str, Any] = Depends(lambda: verify_token()),
-    db: Session = Depends(lambda: get_db())
+    user: Dict[str, Any] = Depends(verify_token),
+    db: Session = Depends(get_db)
 ) -> JSONResponse:
     """
     B-11: Remove item from cart.
@@ -485,8 +485,8 @@ async def remove_cart_item(
 
 @router.delete("/cart")
 async def clear_cart(
-    user: Dict[str, Any] = Depends(lambda: verify_token()),
-    db: Session = Depends(lambda: get_db())
+    user: Dict[str, Any] = Depends(verify_token),
+    db: Session = Depends(get_db)
 ) -> JSONResponse:
     """
     B-12: Clear entire cart (items and coupons).
@@ -537,8 +537,8 @@ async def clear_cart(
 
 @router.get("/coupons/eligible")
 async def get_eligible_coupons(
-    user: Dict[str, Any] = Depends(lambda: verify_token()),
-    db: Session = Depends(lambda: get_db())
+    user: Dict[str, Any] = Depends(verify_token),
+    db: Session = Depends(get_db)
 ) -> JSONResponse:
     """
     B-14: Get coupons eligible for current cart.
@@ -687,8 +687,8 @@ async def get_eligible_coupons(
 @router.post("/cart/coupons")
 async def add_coupon_to_cart(
     request: AddCouponRequest,
-    user: Dict[str, Any] = Depends(lambda: verify_token()),
-    db: Session = Depends(lambda: get_db())
+    user: Dict[str, Any] = Depends(verify_token),
+    db: Session = Depends(get_db)
 ) -> JSONResponse:
     """
     B-15: Add coupon to cart (user selection).
@@ -767,8 +767,8 @@ async def add_coupon_to_cart(
 @router.delete("/cart/coupons/{coupon_id}")
 async def remove_coupon_from_cart(
     coupon_id: str,
-    user: Dict[str, Any] = Depends(lambda: verify_token()),
-    db: Session = Depends(lambda: get_db())
+    user: Dict[str, Any] = Depends(verify_token),
+    db: Session = Depends(get_db)
 ) -> JSONResponse:
     """
     B-16: Remove coupon from cart.
@@ -806,8 +806,8 @@ async def remove_coupon_from_cart(
 
 @router.get("/cart/summary")
 async def get_cart_summary(
-    user: Dict[str, Any] = Depends(lambda: verify_token()),
-    db: Session = Depends(lambda: get_db())
+    user: Dict[str, Any] = Depends(verify_token),
+    db: Session = Depends(get_db)
 ) -> JSONResponse:
     """
     B-17: Calculate cart totals with coupon stacking logic (B-22).
@@ -1020,8 +1020,8 @@ async def get_cart_summary(
 @router.post("/coupon-interactions")
 async def track_coupon_interaction(
     request: CouponInteractionRequest,
-    user: Dict[str, Any] = Depends(lambda: verify_token()),
-    db: Session = Depends(lambda: get_db())
+    user: Dict[str, Any] = Depends(verify_token),
+    db: Session = Depends(get_db)
 ) -> JSONResponse:
     """
     B-21: Track coupon interaction.
