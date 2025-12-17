@@ -70,7 +70,7 @@ def record_shopping_event(
         text(
             """
             INSERT INTO shopping_session_events (session_id, user_id, event_type, payload)
-            VALUES (:session_id, :user_id, :event_type, :payload::jsonb)
+            VALUES (:session_id, :user_id, :event_type, cast(:payload as jsonb))
             """
         ),
         {
