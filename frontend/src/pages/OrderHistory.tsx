@@ -15,7 +15,7 @@ export function OrderHistory() {
   useEffect(() => {
     const fetchOrders = async () => {
       try {
-        const response = await apiFetch('/orders?limit=20');
+        const response = await apiFetch('/api/orders?limit=20');
         if (response.ok) {
           const data = await response.json();
           setOrders(data.orders);

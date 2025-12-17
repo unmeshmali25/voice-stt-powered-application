@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { apiFetch, publicApiFetch, getApiBaseUrl } from '../lib/api';
 import { Store } from '../types/retail';
 import { useAuth } from '../hooks/useAuth';
+import { setSelectedStoreIdForUser } from '../lib/shoppingSession';
 
 interface StoreContextType {
   selectedStore: Store | null;
@@ -57,8 +58,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const data = await response.json();
       if (data.has_selection && data.store) {
         setSelectedStore(data.store);
+        if (session?.user?.id) {
+          setSelectedStoreIdForUser(session.user.id, data.store.id);
+        }
       } else {
         setSelectedStore(null);
+        if (session?.user?.id) {
+          setSelectedStoreIdForUser(session.user.id, null);
+        }
       }
     } catch (error) {
       console.error('Failed to fetch user store:', error);
@@ -86,6 +93,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
       const data = await response.json();
       setSelectedStore(data.store);
+      if (session?.user?.id) {
+        setSelectedStoreIdForUser(session.user.id, data.store?.id ?? null);
+      }
       // If cart was cleared, we might want to trigger a cart refresh here
       // or let the CartContext handle it via a shared event or re-fetch
     } catch (error) {

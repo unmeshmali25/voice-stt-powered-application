@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '../compone
 import { Separator } from '../components/ui/separator';
 import { Loader2, ArrowLeft } from 'lucide-react';
 import { apiFetch } from '../lib/api';
+import { clearCurrentShoppingSession } from '../lib/shoppingSession';
 
 export function Checkout() {
   const { items, summary, itemCount, clearCart } = useCart();
@@ -19,7 +20,7 @@ export function Checkout() {
     
     setPlacingOrder(true);
     try {
-      const response = await apiFetch('/orders', {
+      const response = await apiFetch('/api/orders', {
         method: 'POST',
       });
 
@@ -27,6 +28,8 @@ export function Checkout() {
         const data = await response.json();
         // Clear cart is usually handled by backend or we do it here
         await clearCart();
+        // Rotate shopping session after successful checkout
+        await clearCurrentShoppingSession();
         navigate('/order-confirmation', { state: { order: data.order } });
       } else {
         const error = await response.json();

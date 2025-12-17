@@ -10,7 +10,7 @@ import logging
 from typing import Dict, Any, List, Optional
 from decimal import Decimal
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Header
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Header, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -19,6 +19,13 @@ logger = logging.getLogger("multi_modal_retail.orders")
 
 router = APIRouter(prefix="/api", tags=["orders"])
 
+from app.session_tracking import (
+    get_selected_store_id as _get_selected_store_id_for_session,
+    get_shopping_session_id,
+    touch_shopping_session,
+    record_shopping_event,
+    complete_shopping_session,
+)
 
 # --- Dependencies (imported from main) ---
 
@@ -83,6 +90,7 @@ def calculate_discount(coupon: Dict, amount: Decimal) -> Decimal:
 
 @router.post("/orders")
 async def create_order(
+    http_request: Request,
     user: Dict[str, Any] = Depends(token_dep),
     db: Session = Depends(db_dep)
 ) -> JSONResponse:
@@ -100,6 +108,8 @@ async def create_order(
     user_id = user["user_id"]
 
     try:
+        session_id = get_shopping_session_id(http_request)
+
         # Get user's selected store
         store_id = get_user_store_id(db, user_id)
         if not store_id:
@@ -265,8 +275,8 @@ async def create_order(
         # Create order
         order_result = db.execute(
             text("""
-                INSERT INTO orders (user_id, store_id, subtotal, discount_total, final_total, status)
-                VALUES (:user_id, :store_id, :subtotal, :discount_total, :final_total, 'completed')
+                INSERT INTO orders (user_id, store_id, subtotal, discount_total, final_total, status, shopping_session_id)
+                VALUES (:user_id, :store_id, :subtotal, :discount_total, :final_total, 'completed', :shopping_session_id)
                 RETURNING id, created_at
             """),
             {
@@ -274,7 +284,8 @@ async def create_order(
                 "store_id": store_id,
                 "subtotal": float(subtotal),
                 "discount_total": float(discount_total),
-                "final_total": float(final_total)
+                "final_total": float(final_total),
+                "shopping_session_id": session_id
             }
         )
         order_row = order_result.fetchone()
@@ -325,6 +336,23 @@ async def create_order(
                 {"user_id": user_id, "coupon_id": coupon_id, "order_id": order_id}
             )
 
+        # Session event tracking + completion
+        if session_id:
+            touch_shopping_session(
+                db,
+                session_id=session_id,
+                user_id=user_id,
+                store_id=_get_selected_store_id_for_session(db, user_id),
+            )
+            record_shopping_event(
+                db,
+                session_id=session_id,
+                user_id=user_id,
+                event_type="checkout_completed",
+                payload={"order_id": order_id, "store_id": store_id, "final_total": float(final_total)},
+            )
+            complete_shopping_session(db, session_id=session_id, user_id=user_id)
+
         # Clear cart
         db.execute(
             text("DELETE FROM cart_items WHERE user_id = :user_id"),
@@ -344,16 +372,74 @@ async def create_order(
         )
         store_name = store_result.fetchone()[0]
 
-        # Build response
-        order_items_response = []
-        for item_data in order_items_data:
-            order_items_response.append({
-                "product_name": item_data["product_name"],
-                "quantity": item_data["quantity"],
-                "unit_price": float(item_data["product_price"]),
-                "discount_amount": float(item_data["discount_amount"]),
-                "line_total": float(item_data["line_total"])
-            })
+        # Build response in the same shape as GET /api/orders/{order_id}
+        items_result = db.execute(
+            text(
+                """
+                SELECT
+                    oi.id,
+                    oi.product_id,
+                    oi.product_name,
+                    oi.product_price,
+                    oi.quantity,
+                    oi.applied_coupon_id,
+                    oi.discount_amount,
+                    oi.line_total,
+                    c.discount_details as coupon_details,
+                    c.type as coupon_type
+                FROM order_items oi
+                LEFT JOIN coupons c ON oi.applied_coupon_id = c.id
+                WHERE oi.order_id = :order_id
+                ORDER BY oi.created_at
+                """
+            ),
+            {"order_id": order_id},
+        )
+        item_rows = items_result.fetchall()
+
+        items = []
+        applied_coupons = {}
+
+        for row in item_rows:
+            items.append(
+                {
+                    "id": str(row[0]),
+                    "product_id": str(row[1]),
+                    "product_name": row[2],
+                    "unit_price": float(row[3]) if row[3] else 0,
+                    "quantity": row[4],
+                    "discount_amount": float(row[6]) if row[6] else 0,
+                    "line_total": float(row[7]) if row[7] else 0,
+                    "applied_coupon": (
+                        {"id": str(row[5]), "details": row[8], "type": row[9]}
+                        if row[5]
+                        else None
+                    ),
+                }
+            )
+
+            if row[5] and str(row[5]) not in applied_coupons:
+                applied_coupons[str(row[5])] = {
+                    "id": str(row[5]),
+                    "details": row[8],
+                    "type": row[9],
+                }
+
+        frontstore_result = db.execute(
+            text(
+                """
+                SELECT c.id, c.discount_details
+                FROM coupon_interactions ci
+                JOIN coupons c ON ci.coupon_id = c.id
+                WHERE ci.order_id = :order_id
+                  AND ci.action = 'redeemed'
+                  AND c.type = 'frontstore'
+                """
+            ),
+            {"order_id": order_id},
+        )
+        frontstore_rows = frontstore_result.fetchall()
+        frontstore_coupons = [{"id": str(r[0]), "details": r[1], "type": "frontstore"} for r in frontstore_rows]
 
         logger.info(f"User {user_id} completed order {order_id}: ${final_total:.2f}")
 
@@ -362,13 +448,19 @@ async def create_order(
             "order": {
                 "id": order_id,
                 "store": {"id": store_id, "name": store_name},
-                "items": order_items_response,
-                "subtotal": float(subtotal),
-                "item_discounts": float(item_discount_total),
-                "frontstore_discount": float(frontstore_discount_amount),
-                "discount_total": float(discount_total),
-                "final_total": float(final_total),
-                "coupons_used": len(applied_coupon_ids),
+                "items": items,
+                "applied_coupons": {
+                    "item_level": list(applied_coupons.values()),
+                    "frontstore": frontstore_coupons
+                },
+                "totals": {
+                    "subtotal": float(subtotal),
+                    "item_discounts": float(item_discount_total),
+                    "frontstore_discount": float(frontstore_discount_amount),
+                    "discount_total": float(discount_total),
+                    "final_total": float(final_total)
+                },
+                "status": "completed",
                 "created_at": order_created_at.isoformat() if order_created_at else None
             },
             "message": "Thank you for your purchase! Your order has been placed successfully."

@@ -17,7 +17,7 @@ export function OrderDetail() {
   useEffect(() => {
     const fetchOrder = async () => {
       try {
-        const response = await apiFetch(`/orders/${orderId}`);
+        const response = await apiFetch(`/api/orders/${orderId}`);
         if (response.ok) {
           const data = await response.json();
           setOrder(data.order);

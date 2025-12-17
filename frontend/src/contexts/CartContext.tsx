@@ -33,6 +33,23 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const { session } = useAuth();
   const { selectedStore } = useStore();
 
+  const normalizeCartItems = (rawItems: any[]): CartItem[] => {
+    if (!Array.isArray(rawItems)) return [];
+    return rawItems.map((item: any) => {
+      const p = item?.product || {};
+      return {
+        ...item,
+        product: {
+          ...p,
+          imageUrl: p.imageUrl ?? p.image_url ?? '',
+          reviewCount: p.reviewCount ?? p.review_count ?? 0,
+          promoText: p.promoText ?? p.promo_text ?? null,
+          inStock: p.inStock ?? p.in_stock ?? true,
+        },
+      } as CartItem;
+    });
+  };
+
   const fetchCart = async () => {
     if (!session || !selectedStore) {
       setItems([]);
@@ -43,10 +60,10 @@ export function CartProvider({ children }: { children: ReactNode }) {
 
     setLoading(true);
     try {
-      const response = await apiFetch('/cart');
+      const response = await apiFetch('/api/cart');
       if (response.ok) {
         const data = await response.json();
-        setItems(data.items || []);
+        setItems(normalizeCartItems(data.items || []));
         setCoupons(data.coupons || []);
         
         // Also fetch summary and eligible coupons
@@ -61,7 +78,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
 
   const fetchSummary = async () => {
     try {
-      const response = await apiFetch('/cart/summary');
+      const response = await apiFetch('/api/cart/summary');
       if (response.ok) {
         const data = await response.json();
         setSummary(data);
@@ -73,7 +90,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
 
   const fetchEligibleCoupons = async () => {
     try {
-      const response = await apiFetch('/coupons/eligible');
+      const response = await apiFetch('/api/coupons/eligible');
       if (response.ok) {
         const data = await response.json();
         setEligibleCoupons(data.eligible || []);
@@ -91,7 +108,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const addToCart = async (productId: string, quantity: number) => {
     setLoading(true);
     try {
-      const response = await apiFetch('/cart/items', {
+      const response = await apiFetch('/api/cart/items', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ product_id: productId, quantity }),
@@ -110,7 +127,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const updateQuantity = async (itemId: string, quantity: number) => {
     setLoading(true);
     try {
-      const response = await apiFetch(`/cart/items/${itemId}`, {
+      const response = await apiFetch(`/api/cart/items/${itemId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ quantity }),
@@ -129,7 +146,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const removeItem = async (itemId: string) => {
     setLoading(true);
     try {
-      const response = await apiFetch(`/cart/items/${itemId}`, {
+      const response = await apiFetch(`/api/cart/items/${itemId}`, {
         method: 'DELETE',
       });
 
@@ -146,7 +163,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const addCoupon = async (couponId: string) => {
     setLoading(true);
     try {
-      const response = await apiFetch('/cart/coupons', {
+      const response = await apiFetch('/api/cart/coupons', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ coupon_id: couponId }),
@@ -165,7 +182,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const removeCoupon = async (couponId: string) => {
     setLoading(true);
     try {
-      const response = await apiFetch(`/cart/coupons/${couponId}`, {
+      const response = await apiFetch(`/api/cart/coupons/${couponId}`, {
         method: 'DELETE',
       });
 
@@ -182,7 +199,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const clearCart = async () => {
     setLoading(true);
     try {
-      const response = await apiFetch('/cart', {
+      const response = await apiFetch('/api/cart', {
         method: 'DELETE',
       });
 

@@ -1,4 +1,9 @@
 import { supabase, isSupabaseConfigured } from './supabase'
+import {
+  getOrCreateShoppingSessionId,
+  getSelectedStoreIdForUser,
+  shouldAttachShoppingSessionHeader,
+} from './shoppingSession'
 
 // API base URL from environment variables
 // In development: uses Vite proxy (/api -> localhost:8000)
@@ -72,6 +77,23 @@ export async function apiFetch(
   const headers = new Headers(options.headers)
   headers.set('Authorization', `Bearer ${session.access_token}`)
 
+  // Attach shopping session header for search/cart/checkout flows
+  try {
+    if (typeof window !== 'undefined') {
+      const parsed = new URL(fullUrl, window.location.origin)
+      if (shouldAttachShoppingSessionHeader(parsed.pathname)) {
+        const userId = session.user?.id
+        const storeId = userId ? getSelectedStoreIdForUser(userId) : null
+        if (userId) {
+          const shoppingSessionId = getOrCreateShoppingSessionId(userId, storeId)
+          headers.set('X-Shopping-Session-Id', shoppingSessionId)
+        }
+      }
+    }
+  } catch {
+    // best-effort only
+  }
+
   // Don't set Content-Type for FormData - browser will set it with boundary
   const isFormData = options.body instanceof FormData
   if (isFormData && headers.has('Content-Type')) {
@@ -98,6 +120,21 @@ export async function apiFetch(
     // Retry the request with new token
     const retryHeaders = new Headers(options.headers)
     retryHeaders.set('Authorization', `Bearer ${newSession.access_token}`)
+    try {
+      if (typeof window !== 'undefined') {
+        const parsed = new URL(fullUrl, window.location.origin)
+        if (shouldAttachShoppingSessionHeader(parsed.pathname)) {
+          const userId = newSession.user?.id
+          const storeId = userId ? getSelectedStoreIdForUser(userId) : null
+          if (userId) {
+            const shoppingSessionId = getOrCreateShoppingSessionId(userId, storeId)
+            retryHeaders.set('X-Shopping-Session-Id', shoppingSessionId)
+          }
+        }
+      }
+    } catch {
+      // best-effort only
+    }
     if (isFormData && retryHeaders.has('Content-Type')) {
       retryHeaders.delete('Content-Type')
     }

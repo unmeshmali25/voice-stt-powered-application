@@ -37,6 +37,14 @@ from supabase import create_client, Client
 import jwt
 from jwt import PyJWTError
 
+# Shopping session tracking
+from app.session_tracking import (
+    get_selected_store_id as get_selected_store_id_for_session,
+    get_shopping_session_id,
+    touch_shopping_session,
+    record_shopping_event,
+)
+
 # Import route modules
 from app.routes import stores as stores_routes
 from app.routes import cart as cart_routes
@@ -790,6 +798,14 @@ async def coupon_search(
         )
 
     user_id = user["user_id"]
+    session_id = get_shopping_session_id(request)
+    if session_id:
+        touch_shopping_session(
+            db,
+            session_id=session_id,
+            user_id=user_id,
+            store_id=get_selected_store_id_for_session(db, user_id),
+        )
 
     # Tunables
     try:
@@ -861,6 +877,15 @@ async def coupon_search(
             logger.info(f"ILIKE search returned {len(rows)} candidates")
 
         if not rows:
+            if session_id:
+                record_shopping_event(
+                    db,
+                    session_id=session_id,
+                    user_id=user_id,
+                    event_type="coupon_search",
+                    payload={"question": question, "query": search_query, "results": 0, "message": "no_results"},
+                )
+                db.commit()
             return JSONResponse({"results": [], "message": "no_results"}, status_code=200)
 
         # Build candidate list
@@ -880,6 +905,20 @@ async def coupon_search(
         if not api_key:
             # Return FTS results without scores
             logger.warning("No OpenAI API key, returning FTS results without re-ranking")
+            if session_id:
+                record_shopping_event(
+                    db,
+                    session_id=session_id,
+                    user_id=user_id,
+                    event_type="coupon_search",
+                    payload={
+                        "question": question,
+                        "query": search_query,
+                        "results": len(candidates[:rerank_top_n]),
+                        "message": "no_reranking",
+                    },
+                )
+                db.commit()
             return JSONResponse({
                 "results": candidates[:rerank_top_n],
                 "message": "no_reranking"
@@ -907,6 +946,20 @@ async def coupon_search(
         except Exception as e:
             logger.exception("Embeddings failed: %s", e)
             # Fallback to FTS order
+            if session_id:
+                record_shopping_event(
+                    db,
+                    session_id=session_id,
+                    user_id=user_id,
+                    event_type="coupon_search",
+                    payload={
+                        "question": question,
+                        "query": search_query,
+                        "results": len(candidates[:rerank_top_n]),
+                        "message": "embedding_failed",
+                    },
+                )
+                db.commit()
             return JSONResponse({
                 "results": candidates[:rerank_top_n],
                 "message": "embedding_failed"
@@ -930,6 +983,21 @@ async def coupon_search(
         top_results = candidates[:rerank_top_n]
 
         logger.info(f"Re-ranked coupons for user {user_id}. Top score: {top_results[0]['score'] if top_results else 'N/A'}")
+
+        if session_id:
+            record_shopping_event(
+                db,
+                session_id=session_id,
+                user_id=user_id,
+                event_type="coupon_search",
+                payload={
+                    "question": question,
+                    "query": search_query,
+                    "results": len(top_results),
+                    "total_candidates": len(candidates),
+                },
+            )
+            db.commit()
 
         return JSONResponse({
             "results": top_results,
@@ -979,6 +1047,14 @@ async def product_search(
         )
     
     user_id = user["user_id"]
+    session_id = get_shopping_session_id(request)
+    if session_id:
+        touch_shopping_session(
+            db,
+            session_id=session_id,
+            user_id=user_id,
+            store_id=get_selected_store_id_for_session(db, user_id),
+        )
     logger.info(f"User {user_id} searching products with query: '{query}'")
     
     # Clean query
@@ -1053,10 +1129,17 @@ async def product_search(
                 "inStock": row[10]
             })
         
-        return JSONResponse({
-            "products": products,
-            "count": len(products)
-        }, status_code=200)
+        if session_id:
+            record_shopping_event(
+                db,
+                session_id=session_id,
+                user_id=user_id,
+                event_type="product_search",
+                payload={"query": query, "effective_query": search_query, "count": len(products), "limit": limit},
+            )
+            db.commit()
+
+        return JSONResponse({"products": products, "count": len(products)}, status_code=200)
     
     except Exception as e:
         logger.exception(f"Product search failed for user {user_id}: %s", e)

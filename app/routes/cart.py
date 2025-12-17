@@ -27,6 +27,12 @@ logger = logging.getLogger("multi_modal_retail.cart")
 
 router = APIRouter(prefix="/api", tags=["cart"])
 
+from app.session_tracking import (
+    get_selected_store_id as _get_selected_store_id_for_session,
+    get_shopping_session_id,
+    touch_shopping_session,
+    record_shopping_event,
+)
 
 # --- Pydantic Models ---
 
@@ -245,6 +251,7 @@ async def get_cart(
 @router.post("/cart/items")
 async def add_to_cart(
     request: AddToCartRequest,
+    http_request: Request,
     user: Dict[str, Any] = Depends(token_dep),
     db: Session = Depends(db_dep)
 ) -> JSONResponse:
@@ -309,6 +316,24 @@ async def add_to_cart(
                 "quantity": quantity
             }
         )
+
+        # Session event tracking (best-effort inside transaction)
+        session_id = get_shopping_session_id(http_request)
+        if session_id:
+            touch_shopping_session(
+                db,
+                session_id=session_id,
+                user_id=user_id,
+                store_id=_get_selected_store_id_for_session(db, user_id),
+            )
+            record_shopping_event(
+                db,
+                session_id=session_id,
+                user_id=user_id,
+                event_type="cart_add_item",
+                payload={"product_id": product_id, "quantity": quantity, "store_id": store_id},
+            )
+
         db.commit()
 
         # Get updated cart item
@@ -354,6 +379,7 @@ async def add_to_cart(
 async def update_cart_item(
     item_id: str,
     request: UpdateCartItemRequest,
+    http_request: Request,
     user: Dict[str, Any] = Depends(token_dep),
     db: Session = Depends(db_dep)
 ) -> JSONResponse:
@@ -408,6 +434,23 @@ async def update_cart_item(
             """),
             {"quantity": quantity, "item_id": item_id, "user_id": user_id}
         )
+
+        session_id = get_shopping_session_id(http_request)
+        if session_id:
+            touch_shopping_session(
+                db,
+                session_id=session_id,
+                user_id=user_id,
+                store_id=_get_selected_store_id_for_session(db, user_id),
+            )
+            record_shopping_event(
+                db,
+                session_id=session_id,
+                user_id=user_id,
+                event_type="cart_update_qty",
+                payload={"cart_item_id": item_id, "quantity": quantity},
+            )
+
         db.commit()
 
         # Get updated cart item
@@ -450,6 +493,7 @@ async def update_cart_item(
 @router.delete("/cart/items/{item_id}")
 async def remove_cart_item(
     item_id: str,
+    http_request: Request,
     user: Dict[str, Any] = Depends(token_dep),
     db: Session = Depends(db_dep)
 ) -> JSONResponse:
@@ -475,6 +519,23 @@ async def remove_cart_item(
             text("DELETE FROM cart_items WHERE id = :item_id AND user_id = :user_id"),
             {"item_id": item_id, "user_id": user_id}
         )
+
+        session_id = get_shopping_session_id(http_request)
+        if session_id:
+            touch_shopping_session(
+                db,
+                session_id=session_id,
+                user_id=user_id,
+                store_id=_get_selected_store_id_for_session(db, user_id),
+            )
+            record_shopping_event(
+                db,
+                session_id=session_id,
+                user_id=user_id,
+                event_type="cart_remove_item",
+                payload={"cart_item_id": item_id},
+            )
+
         db.commit()
 
         logger.info(f"User {user_id} removed cart item {item_id}")
@@ -493,6 +554,7 @@ async def remove_cart_item(
 
 @router.delete("/cart")
 async def clear_cart(
+    http_request: Request,
     user: Dict[str, Any] = Depends(token_dep),
     db: Session = Depends(db_dep)
 ) -> JSONResponse:
@@ -525,6 +587,23 @@ async def clear_cart(
             text("DELETE FROM cart_coupons WHERE user_id = :user_id"),
             {"user_id": user_id}
         )
+
+        session_id = get_shopping_session_id(http_request)
+        if session_id:
+            touch_shopping_session(
+                db,
+                session_id=session_id,
+                user_id=user_id,
+                store_id=_get_selected_store_id_for_session(db, user_id),
+            )
+            record_shopping_event(
+                db,
+                session_id=session_id,
+                user_id=user_id,
+                event_type="cart_clear",
+                payload={"items_removed": int(items_count), "coupons_removed": int(coupons_count)},
+            )
+
         db.commit()
 
         logger.info(f"User {user_id} cleared cart: {items_count} items, {coupons_count} coupons")
@@ -695,6 +774,7 @@ async def get_eligible_coupons(
 @router.post("/cart/coupons")
 async def add_coupon_to_cart(
     request: AddCouponRequest,
+    http_request: Request,
     user: Dict[str, Any] = Depends(token_dep),
     db: Session = Depends(db_dep)
 ) -> JSONResponse:
@@ -746,6 +826,22 @@ async def add_coupon_to_cart(
             {"user_id": user_id, "coupon_id": coupon_id}
         )
 
+        session_id = get_shopping_session_id(http_request)
+        if session_id:
+            touch_shopping_session(
+                db,
+                session_id=session_id,
+                user_id=user_id,
+                store_id=_get_selected_store_id_for_session(db, user_id),
+            )
+            record_shopping_event(
+                db,
+                session_id=session_id,
+                user_id=user_id,
+                event_type="cart_add_coupon",
+                payload={"coupon_id": coupon_id},
+            )
+
         db.commit()
 
         coupon = {
@@ -775,6 +871,7 @@ async def add_coupon_to_cart(
 @router.delete("/cart/coupons/{coupon_id}")
 async def remove_coupon_from_cart(
     coupon_id: str,
+    http_request: Request,
     user: Dict[str, Any] = Depends(token_dep),
     db: Session = Depends(db_dep)
 ) -> JSONResponse:
@@ -798,6 +895,23 @@ async def remove_coupon_from_cart(
             text("DELETE FROM cart_coupons WHERE user_id = :user_id AND coupon_id = :coupon_id"),
             {"user_id": user_id, "coupon_id": coupon_id}
         )
+
+        session_id = get_shopping_session_id(http_request)
+        if session_id:
+            touch_shopping_session(
+                db,
+                session_id=session_id,
+                user_id=user_id,
+                store_id=_get_selected_store_id_for_session(db, user_id),
+            )
+            record_shopping_event(
+                db,
+                session_id=session_id,
+                user_id=user_id,
+                event_type="cart_remove_coupon",
+                payload={"coupon_id": coupon_id},
+            )
+
         db.commit()
 
         logger.info(f"User {user_id} removed coupon {coupon_id} from cart")

@@ -1,6 +1,7 @@
 import React from 'react';
 import { ShoppingCart } from 'lucide-react';
 import { Button } from './ui/button';
+import { useNavigate } from 'react-router-dom';
 import {
   Sheet,
   SheetContent,
@@ -17,6 +18,7 @@ import { Separator } from './ui/separator';
 
 export function CartDrawer() {
   const { items, itemCount, summary, clearCart, loading } = useCart();
+  const navigate = useNavigate();
 
   return (
     <Sheet>
@@ -86,7 +88,7 @@ export function CartDrawer() {
               </div>
             </div>
             <SheetFooter className="flex-col gap-2 sm:flex-col">
-              <Button className="w-full" size="lg">
+              <Button className="w-full" size="lg" onClick={() => navigate('/checkout')}>
                 Checkout
               </Button>
               <Button
