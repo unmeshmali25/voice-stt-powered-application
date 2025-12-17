@@ -197,6 +197,7 @@ def get_cors_origins():
         # TODO Stage 3: Update URLs after infrastructure setup
         return [
             FRONTEND_URL,
+            "https://voice-stt-powered-application.vercel.app",
             "https://voiceoffers.vercel.app",  # TODO: Update to multi-modal-retail.vercel.app
             "https://voiceoffers.com"  # TODO: Update to custom domain if applicable
         ]
