@@ -9,7 +9,7 @@ B-4: GET /api/user/store - Get user's selected store
 
 import logging
 from typing import Dict, Any, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Header
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -28,28 +28,37 @@ class SetStoreRequest(BaseModel):
 
 # --- Dependencies (imported from main) ---
 
-def get_db():
-    """Dependency placeholder - will be overridden when router is included."""
-    pass
-
-
-def verify_token(authorization: str = None) -> Dict[str, Any]:
-    """Dependency placeholder - will be overridden when router is included."""
-    pass
+_db_dependency = None
+_token_dependency = None
 
 
 def set_dependencies(db_dependency, token_dependency):
     """Set the actual dependencies from main module."""
-    global get_db, verify_token
-    get_db = db_dependency
-    verify_token = token_dependency
+    global _db_dependency, _token_dependency
+    _db_dependency = db_dependency
+    _token_dependency = token_dependency
+
+
+def db_dep():
+    """DB dependency wrapper that defers to the injected dependency at runtime."""
+    if _db_dependency is None:
+        raise RuntimeError("DB dependency not configured. Did you call set_dependencies()?")
+    # _db_dependency is expected to be a generator dependency that yields a Session
+    yield from _db_dependency()
+
+
+def token_dep(authorization: str = Header(None)) -> Dict[str, Any]:
+    """Auth dependency wrapper that defers to the injected dependency at runtime."""
+    if _token_dependency is None:
+        raise RuntimeError("Token dependency not configured. Did you call set_dependencies()?")
+    return _token_dependency(authorization)
 
 
 # --- Routes ---
 
 @router.get("/stores")
 async def list_stores(
-    db: Session = Depends(get_db)
+    db: Session = Depends(db_dep)
 ) -> JSONResponse:
     """
     B-1: List all available stores.
@@ -88,7 +97,7 @@ async def list_stores(
 @router.get("/stores/{store_id}")
 async def get_store(
     store_id: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(db_dep)
 ) -> JSONResponse:
     """
     B-2: Get single store with inventory summary.
@@ -150,8 +159,8 @@ async def get_store(
 
 @router.get("/user/store")
 async def get_user_store(
-    user: Dict[str, Any] = Depends(verify_token),
-    db: Session = Depends(get_db)
+    user: Dict[str, Any] = Depends(token_dep),
+    db: Session = Depends(db_dep)
 ) -> JSONResponse:
     """
     B-4: Get user's selected store.
@@ -196,8 +205,8 @@ async def get_user_store(
 @router.put("/user/store")
 async def set_user_store(
     request: SetStoreRequest,
-    user: Dict[str, Any] = Depends(verify_token),
-    db: Session = Depends(get_db)
+    user: Dict[str, Any] = Depends(token_dep),
+    db: Session = Depends(db_dep)
 ) -> JSONResponse:
     """
     B-3: Set user's selected store.

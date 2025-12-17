@@ -10,7 +10,7 @@ import logging
 from typing import Dict, Any, List, Optional
 from decimal import Decimal
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Header
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -22,21 +22,29 @@ router = APIRouter(prefix="/api", tags=["orders"])
 
 # --- Dependencies (imported from main) ---
 
-def get_db():
-    """Dependency placeholder."""
-    pass
-
-
-def verify_token(authorization: str = None) -> Dict[str, Any]:
-    """Dependency placeholder."""
-    pass
+_db_dependency = None
+_token_dependency = None
 
 
 def set_dependencies(db_dependency, token_dependency):
     """Set the actual dependencies from main module."""
-    global get_db, verify_token
-    get_db = db_dependency
-    verify_token = token_dependency
+    global _db_dependency, _token_dependency
+    _db_dependency = db_dependency
+    _token_dependency = token_dependency
+
+
+def db_dep():
+    """DB dependency wrapper that defers to the injected dependency at runtime."""
+    if _db_dependency is None:
+        raise RuntimeError("DB dependency not configured. Did you call set_dependencies()?")
+    yield from _db_dependency()
+
+
+def token_dep(authorization: str = Header(None)) -> Dict[str, Any]:
+    """Auth dependency wrapper that defers to the injected dependency at runtime."""
+    if _token_dependency is None:
+        raise RuntimeError("Token dependency not configured. Did you call set_dependencies()?")
+    return _token_dependency(authorization)
 
 
 # --- Helper Functions ---
@@ -75,8 +83,8 @@ def calculate_discount(coupon: Dict, amount: Decimal) -> Decimal:
 
 @router.post("/orders")
 async def create_order(
-    user: Dict[str, Any] = Depends(verify_token),
-    db: Session = Depends(get_db)
+    user: Dict[str, Any] = Depends(token_dep),
+    db: Session = Depends(db_dep)
 ) -> JSONResponse:
     """
     B-18: Create order (checkout).
@@ -381,8 +389,8 @@ async def create_order(
 async def get_orders(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    user: Dict[str, Any] = Depends(verify_token),
-    db: Session = Depends(get_db)
+    user: Dict[str, Any] = Depends(token_dep),
+    db: Session = Depends(db_dep)
 ) -> JSONResponse:
     """
     B-19: Get user's order history.
@@ -451,8 +459,8 @@ async def get_orders(
 @router.get("/orders/{order_id}")
 async def get_order_detail(
     order_id: str,
-    user: Dict[str, Any] = Depends(verify_token),
-    db: Session = Depends(get_db)
+    user: Dict[str, Any] = Depends(token_dep),
+    db: Session = Depends(db_dep)
 ) -> JSONResponse:
     """
     B-20: Get order details with items and applied coupons (receipt view).
