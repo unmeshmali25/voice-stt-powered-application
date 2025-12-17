@@ -174,50 +174,61 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # CORS - environment-based configuration
+# Always include production URLs as fallback to handle ENV misconfiguration
+ALWAYS_ALLOWED_ORIGINS = [
+    "https://voice-stt-powered-application.vercel.app",
+    "https://voiceoffers.vercel.app",
+]
+
 def get_cors_origins():
     """Get CORS origins based on environment."""
+    base_origins = list(ALWAYS_ALLOWED_ORIGINS)  # Always include production URLs
+    
+    if FRONTEND_URL and FRONTEND_URL not in base_origins:
+        base_origins.append(FRONTEND_URL)
+    
     if IS_DEV:
-        # Development: Allow localhost ports
-        return [
+        # Development: Allow localhost ports + production URLs
+        base_origins.extend([
             "http://localhost:5174",
             "http://localhost:3000",
             "http://127.0.0.1:5174",
             "http://127.0.0.1:3000"
-        ]
+        ])
     elif IS_STAGING:
-        # Staging: Allow Vercel preview URLs. Add base domain just in case.
-        # TODO Stage 3: Update URLs after infrastructure setup
-        return [
-            FRONTEND_URL,
+        # Staging: Allow Vercel preview URLs
+        base_origins.extend([
             "https://voice-stt-powered-application-staging.vercel.app",
-            "https://voiceoffers-staging.vercel.app",  # TODO: Update to multi-modal-retail-staging.vercel.app
-        ]
+            "https://voiceoffers-staging.vercel.app",
+        ])
     elif IS_PROD:
-        # Production: Only allow production domain
-        # TODO Stage 3: Update URLs after infrastructure setup
-        return [
-            FRONTEND_URL,
-            "https://voice-stt-powered-application.vercel.app",
-            "https://voiceoffers.vercel.app",  # TODO: Update to multi-modal-retail.vercel.app
-            "https://voiceoffers.com"  # TODO: Update to custom domain if applicable
-        ]
+        # Production: Add custom domain if applicable
+        base_origins.append("https://voiceoffers.com")
     else:
-        # Fallback to localhost
-        return ["http://localhost:5174"]
+        # Fallback: still include localhost for local testing
+        base_origins.extend([
+            "http://localhost:5174",
+            "http://localhost:3000",
+        ])
+    
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_origins = []
+    for origin in base_origins:
+        if origin and origin not in seen:
+            seen.add(origin)
+            unique_origins.append(origin)
+    
+    return unique_origins
 
 cors_origins = get_cors_origins()
 logger.info(f"Environment: {ENV}")
 logger.info(f"CORS origins: {cors_origins}")
 
-# Add regex pattern for Vercel preview deployments
-cors_regex = None
-if IS_STAGING or IS_PROD:
-    # Allow both preview deployments (voice-stt-powered-application-<id>.vercel.app)
-    # and the root domain (voice-stt-powered-application.vercel.app), plus voiceoffers.* on vercel
-    # It also handles staging URLs by making '-staging' optional.
-    # TODO Stage 3: Update pattern to multi-modal-retail after infrastructure setup
-    cors_regex = r'https://(voice-stt-powered-application(-staging)?(-[a-z0-9]+)?|voiceoffers.*)\.vercel\.app'
-    logger.info(f"CORS regex pattern: {cors_regex}")
+# Always enable regex pattern for Vercel deployments (handles preview URLs with hashes)
+# This ensures CORS works even if ENV is misconfigured
+cors_regex = r'https://(voice-stt-powered-application(-staging)?(-[a-z0-9]+)?|voiceoffers(-staging)?(-[a-z0-9]+)?)\.vercel\.app'
+logger.info(f"CORS regex pattern: {cors_regex}")
 
 app.add_middleware(
     CORSMiddleware,
