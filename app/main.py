@@ -235,18 +235,6 @@ ensure_dirs()
 app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR), html=False), name="static")
 
 
-# --- Register Route Modules ---
-# Set dependencies for route modules
-stores_routes.set_dependencies(get_db, verify_token)
-cart_routes.set_dependencies(get_db, verify_token)
-orders_routes.set_dependencies(get_db, verify_token)
-
-# Include routers
-app.include_router(stores_routes.router)
-app.include_router(cart_routes.router)
-app.include_router(orders_routes.router)
-
-
 # --- Authentication Utilities ---
 
 def get_db():
@@ -415,6 +403,18 @@ def assign_random_coupons_to_user(db: Session, user_id: str) -> int:
         logger.error(f"Failed to assign coupons to user {user_id}: {e}")
         db.rollback()
         return 0
+
+
+# --- Register Route Modules ---
+# Set dependencies for route modules (must be done after functions are defined)
+stores_routes.set_dependencies(get_db, verify_token)
+cart_routes.set_dependencies(get_db, verify_token)
+orders_routes.set_dependencies(get_db, verify_token)
+
+# Include routers
+app.include_router(stores_routes.router)
+app.include_router(cart_routes.router)
+app.include_router(orders_routes.router)
 
 
 # --- Routes ---
