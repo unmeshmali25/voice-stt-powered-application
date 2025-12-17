@@ -65,11 +65,15 @@ export function StoreSelector({ className }: { className?: string }) {
           <SelectValue placeholder="Select a store" />
         </SelectTrigger>
         <SelectContent>
-          {stores.map((store) => (
-            <SelectItem key={store.id} value={store.id}>
-              {store.name}
-            </SelectItem>
-          ))}
+          {stores.length === 0 ? (
+             <div className="p-2 text-sm text-muted-foreground text-center">No stores available</div>
+          ) : (
+            stores.map((store) => (
+              <SelectItem key={store.id} value={store.id}>
+                {store.name}
+              </SelectItem>
+            ))
+          )}
         </SelectContent>
       </Select>
 
