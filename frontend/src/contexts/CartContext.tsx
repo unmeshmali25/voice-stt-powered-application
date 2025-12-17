@@ -1,0 +1,231 @@
+import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { apiFetch } from '../lib/api';
+import { CartItem, CartSummary, Coupon } from '../types/retail';
+import { useAuth } from '../hooks/useAuth';
+import { useStore } from './StoreContext';
+
+interface CartContextType {
+  items: CartItem[];
+  coupons: Coupon[];
+  eligibleCoupons: Coupon[];
+  ineligibleCoupons: Coupon[];
+  itemCount: number;
+  summary: CartSummary | null;
+  loading: boolean;
+  addToCart: (productId: string, quantity: number) => Promise<void>;
+  updateQuantity: (itemId: string, quantity: number) => Promise<void>;
+  removeItem: (itemId: string) => Promise<void>;
+  addCoupon: (couponId: string) => Promise<void>;
+  removeCoupon: (couponId: string) => Promise<void>;
+  clearCart: () => Promise<void>;
+  refreshCart: () => Promise<void>;
+}
+
+const CartContext = createContext<CartContextType | undefined>(undefined);
+
+export function CartProvider({ children }: { children: ReactNode }) {
+  const [items, setItems] = useState<CartItem[]>([]);
+  const [coupons, setCoupons] = useState<Coupon[]>([]); // Coupons actually applied/in cart
+  const [eligibleCoupons, setEligibleCoupons] = useState<Coupon[]>([]);
+  const [ineligibleCoupons, setIneligibleCoupons] = useState<Coupon[]>([]);
+  const [summary, setSummary] = useState<CartSummary | null>(null);
+  const [loading, setLoading] = useState(false);
+  const { session } = useAuth();
+  const { selectedStore } = useStore();
+
+  const fetchCart = async () => {
+    if (!session || !selectedStore) {
+      setItems([]);
+      setCoupons([]);
+      setSummary(null);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await apiFetch('/cart');
+      if (response.ok) {
+        const data = await response.json();
+        setItems(data.items || []);
+        setCoupons(data.coupons || []);
+        
+        // Also fetch summary and eligible coupons
+        await Promise.all([fetchSummary(), fetchEligibleCoupons()]);
+      }
+    } catch (error) {
+      console.error('Failed to fetch cart:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchSummary = async () => {
+    try {
+      const response = await apiFetch('/cart/summary');
+      if (response.ok) {
+        const data = await response.json();
+        setSummary(data);
+      }
+    } catch (error) {
+      console.error('Failed to fetch cart summary:', error);
+    }
+  };
+
+  const fetchEligibleCoupons = async () => {
+    try {
+      const response = await apiFetch('/coupons/eligible');
+      if (response.ok) {
+        const data = await response.json();
+        setEligibleCoupons(data.eligible || []);
+        setIneligibleCoupons(data.ineligible || []);
+      }
+    } catch (error) {
+      console.error('Failed to fetch eligible coupons:', error);
+    }
+  };
+
+  useEffect(() => {
+    fetchCart();
+  }, [session, selectedStore]);
+
+  const addToCart = async (productId: string, quantity: number) => {
+    setLoading(true);
+    try {
+      const response = await apiFetch('/cart/items', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ product_id: productId, quantity }),
+      });
+
+      if (!response.ok) throw new Error('Failed to add to cart');
+      await fetchCart();
+    } catch (error) {
+      console.error('Error adding to cart:', error);
+      throw error;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const updateQuantity = async (itemId: string, quantity: number) => {
+    setLoading(true);
+    try {
+      const response = await apiFetch(`/cart/items/${itemId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ quantity }),
+      });
+
+      if (!response.ok) throw new Error('Failed to update quantity');
+      await fetchCart();
+    } catch (error) {
+      console.error('Error updating quantity:', error);
+      throw error;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const removeItem = async (itemId: string) => {
+    setLoading(true);
+    try {
+      const response = await apiFetch(`/cart/items/${itemId}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) throw new Error('Failed to remove item');
+      await fetchCart();
+    } catch (error) {
+      console.error('Error removing item:', error);
+      throw error;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const addCoupon = async (couponId: string) => {
+    setLoading(true);
+    try {
+      const response = await apiFetch('/cart/coupons', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ coupon_id: couponId }),
+      });
+
+      if (!response.ok) throw new Error('Failed to add coupon');
+      await fetchCart();
+    } catch (error) {
+      console.error('Error adding coupon:', error);
+      throw error;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const removeCoupon = async (couponId: string) => {
+    setLoading(true);
+    try {
+      const response = await apiFetch(`/cart/coupons/${couponId}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) throw new Error('Failed to remove coupon');
+      await fetchCart();
+    } catch (error) {
+      console.error('Error removing coupon:', error);
+      throw error;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const clearCart = async () => {
+    setLoading(true);
+    try {
+      const response = await apiFetch('/cart', {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) throw new Error('Failed to clear cart');
+      await fetchCart();
+    } catch (error) {
+      console.error('Error clearing cart:', error);
+      throw error;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const itemCount = items.reduce((sum, item) => sum + item.quantity, 0);
+
+  return (
+    <CartContext.Provider
+      value={{
+        items,
+        coupons,
+        eligibleCoupons,
+        ineligibleCoupons,
+        itemCount,
+        summary,
+        loading,
+        addToCart,
+        updateQuantity,
+        removeItem,
+        addCoupon,
+        removeCoupon,
+        clearCart,
+        refreshCart: fetchCart,
+      }}
+    >
+      {children}
+    </CartContext.Provider>
+  );
+}
+
+export function useCart() {
+  const context = useContext(CartContext);
+  if (context === undefined) {
+    throw new Error('useCart must be used within a CartProvider');
+  }
+  return context;
+}

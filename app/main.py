@@ -16,6 +16,7 @@ import time
 import json
 from pathlib import Path
 from typing import Dict, Any, List, Optional
+from decimal import Decimal
 from urllib.parse import urlparse, urlunparse, quote_plus, parse_qsl, urlencode
 import socket
 from functools import wraps
@@ -35,6 +36,11 @@ from sqlalchemy.orm import sessionmaker, Session
 from supabase import create_client, Client
 import jwt
 from jwt import PyJWTError
+
+# Import route modules
+from app.routes import stores as stores_routes
+from app.routes import cart as cart_routes
+from app.routes import orders as orders_routes
 
 # --- Env / Config ---
 load_dotenv()
@@ -227,6 +233,18 @@ ensure_dirs()
 
 # Serve frontend static files
 app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR), html=False), name="static")
+
+
+# --- Register Route Modules ---
+# Set dependencies for route modules
+stores_routes.set_dependencies(get_db, verify_token)
+cart_routes.set_dependencies(get_db, verify_token)
+orders_routes.set_dependencies(get_db, verify_token)
+
+# Include routers
+app.include_router(stores_routes.router)
+app.include_router(cart_routes.router)
+app.include_router(orders_routes.router)
 
 
 # --- Authentication Utilities ---
@@ -1126,12 +1144,185 @@ async def product_search_get(
             })
         
         return JSONResponse({"products": products, "count": len(products)}, status_code=200)
-    
+
     except Exception as e:
         logger.exception(f"Product search (GET) failed for user {user_id}: %s", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Product search failed: {str(e)}"
+        )
+
+
+# --- B-5: GET /api/products - List all products ---
+@app.get("/api/products")
+@limiter.limit("60/minute")
+async def list_products(
+    request: Request,
+    category: Optional[str] = Query(None),
+    brand: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    user: Dict[str, Any] = Depends(verify_token),
+    db: Session = Depends(get_db)
+) -> JSONResponse:
+    """
+    B-5: List all products with optional filters.
+    Returns: { "products": [...], "total": int, "limit": int, "offset": int }
+    """
+    user_id = user["user_id"]
+    logger.info(f"User {user_id} listing products (category={category}, brand={brand}, limit={limit})")
+
+    try:
+        # Build query with optional filters
+        query_parts = ["SELECT id, name, description, image_url, price, rating, review_count, category, brand, promo_text, in_stock FROM products WHERE in_stock = true"]
+        params = {"limit": limit, "offset": offset}
+
+        if category:
+            query_parts.append("AND LOWER(category) = LOWER(:category)")
+            params["category"] = category
+
+        if brand:
+            query_parts.append("AND LOWER(brand) = LOWER(:brand)")
+            params["brand"] = brand
+
+        query_parts.append("ORDER BY rating DESC NULLS LAST, review_count DESC NULLS LAST")
+        query_parts.append("LIMIT :limit OFFSET :offset")
+
+        result = db.execute(text(" ".join(query_parts)), params)
+        rows = result.fetchall()
+
+        # Get total count
+        count_query_parts = ["SELECT COUNT(*) FROM products WHERE in_stock = true"]
+        count_params = {}
+        if category:
+            count_query_parts.append("AND LOWER(category) = LOWER(:category)")
+            count_params["category"] = category
+        if brand:
+            count_query_parts.append("AND LOWER(brand) = LOWER(:brand)")
+            count_params["brand"] = brand
+
+        count_result = db.execute(text(" ".join(count_query_parts)), count_params)
+        total = count_result.scalar() or 0
+
+        products = []
+        for row in rows:
+            products.append({
+                "id": str(row[0]),
+                "name": row[1],
+                "description": row[2],
+                "imageUrl": row[3],
+                "price": float(row[4]) if row[4] else 0.0,
+                "rating": float(row[5]) if row[5] else None,
+                "reviewCount": row[6] or 0,
+                "category": row[7],
+                "brand": row[8],
+                "promoText": row[9],
+                "inStock": row[10]
+            })
+
+        logger.info(f"Returning {len(products)} products (total: {total})")
+        return JSONResponse({
+            "products": products,
+            "total": total,
+            "limit": limit,
+            "offset": offset
+        }, status_code=200)
+
+    except Exception as e:
+        logger.exception(f"Failed to list products: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list products: {str(e)}"
+        )
+
+
+# --- B-6: GET /api/products/{product_id} - Get single product ---
+@app.get("/api/products/{product_id}")
+@limiter.limit("60/minute")
+async def get_product(
+    request: Request,
+    product_id: str,
+    user: Dict[str, Any] = Depends(verify_token),
+    db: Session = Depends(get_db)
+) -> JSONResponse:
+    """
+    B-6: Get single product with inventory at user's selected store.
+    Returns: { "product": {...}, "inventory": { available: int } | null }
+    """
+    user_id = user["user_id"]
+    logger.info(f"User {user_id} getting product {product_id}")
+
+    try:
+        # Get product details
+        result = db.execute(
+            text("""
+                SELECT id, name, description, image_url, price, rating, review_count, category, brand, promo_text, in_stock
+                FROM products
+                WHERE id = :product_id
+            """),
+            {"product_id": product_id}
+        )
+        row = result.fetchone()
+
+        if not row:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Product not found: {product_id}"
+            )
+
+        product = {
+            "id": str(row[0]),
+            "name": row[1],
+            "description": row[2],
+            "imageUrl": row[3],
+            "price": float(row[4]) if row[4] else 0.0,
+            "rating": float(row[5]) if row[5] else None,
+            "reviewCount": row[6] or 0,
+            "category": row[7],
+            "brand": row[8],
+            "promoText": row[9],
+            "inStock": row[10]
+        }
+
+        # Get inventory at user's selected store
+        inventory = None
+        store_result = db.execute(
+            text("SELECT selected_store_id FROM user_preferences WHERE user_id = :user_id"),
+            {"user_id": user_id}
+        )
+        store_row = store_result.fetchone()
+
+        if store_row and store_row[0]:
+            store_id = str(store_row[0])
+            inv_result = db.execute(
+                text("""
+                    SELECT si.quantity, s.name
+                    FROM store_inventory si
+                    JOIN stores s ON si.store_id = s.id
+                    WHERE si.store_id = :store_id AND si.product_id = :product_id
+                """),
+                {"store_id": store_id, "product_id": product_id}
+            )
+            inv_row = inv_result.fetchone()
+            if inv_row:
+                inventory = {
+                    "available": inv_row[0] or 0,
+                    "store_name": inv_row[1]
+                }
+
+        logger.info(f"Returning product: {product['name']}")
+        return JSONResponse({
+            "product": product,
+            "inventory": inventory
+        }, status_code=200)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Failed to get product {product_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get product: {str(e)}"
         )
 
 

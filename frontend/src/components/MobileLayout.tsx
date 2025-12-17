@@ -9,6 +9,8 @@ import { Search, Mic, MicOff, ShoppingBag, Wallet, Scan, LogOut } from 'lucide-r
 import { cn } from '../lib/utils'
 import { useVoiceRecording } from '../hooks/useVoiceRecording'
 import { ARCameraView } from './ARCameraView'
+import { CartDrawer } from './CartDrawer'
+import { StoreSelector } from './StoreSelector'
 
 export function MobileLayout() {
   const {
@@ -85,6 +87,10 @@ export function MobileLayout() {
               {isRecording ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
             </Button>
           </form>
+          <div className="flex items-center gap-1">
+             <StoreSelector className="w-[120px] h-8 text-xs" />
+             <CartDrawer />
+          </div>
           {user && (
             <Button variant="ghost" size="icon" className="rounded-full" onClick={() => signOut()}>
               <LogOut className="h-5 w-5 text-muted-foreground" />

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { SidebarProvider, SidebarInset } from './ui/sidebar'
 import { VoiceSidebar } from './VoiceSidebar'
 import { CouponCard } from './CouponCard'
@@ -8,8 +9,12 @@ import { ProductCardSkeleton, CouponCardSkeleton, NoResults } from './SkeletonLo
 import { ARCameraView } from './ARCameraView'
 import { Button } from './ui/button'
 import { useStoreData } from '../hooks/useStoreData'
+import { StoreSelector } from './StoreSelector'
+import { CartDrawer } from './CartDrawer'
+import { ClipboardList } from 'lucide-react'
 
 export function MainLayout() {
+  const navigate = useNavigate()
   const {
     transcript,
     products,
@@ -52,15 +57,20 @@ export function MainLayout() {
         ) : (
           <SidebarInset>
           <header className="sticky top-0 z-10 flex h-16 items-center justify-between gap-3 border-b border-border/50 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 px-6">
-            <h1 className="text-xl font-bold flex items-center gap-2">
+            <h1 className="text-xl font-bold flex items-center gap-2 cursor-pointer" onClick={() => navigate('/')}>
               <span className="festive-glow">❄️</span>
               {transcript ? 'Recommended for you' : 'AI Powered Retail App'}
               <span className="festive-glow">🎄</span>
             </h1>
             <div className="flex items-center gap-4">
+              <Button variant="ghost" size="icon" onClick={() => navigate('/orders')} title="Order History">
+                <ClipboardList className="h-5 w-5" />
+              </Button>
+              <StoreSelector />
+              <CartDrawer />
               {user && (
                 <>
-                  <span className="text-sm text-muted-foreground">{user.email}</span>
+                  <span className="text-sm text-muted-foreground hidden md:inline">{user.email}</span>
                   <Button variant="outline" size="sm" onClick={handleSignOut}>
                     Sign Out
                   </Button>
@@ -142,8 +152,8 @@ export function MainLayout() {
                             key={product.id}
                             className={`relative transition-all duration-300 ${
                               hoveredProductId && hoveredProductId !== product.id
-                                ? 'opacity-60'
-                                : 'opacity-100'
+                              ? 'opacity-60'
+                              : 'opacity-100'
                             }`}
                             style={{
                               marginTop: index === 0 ? '0' : '-4rem',
