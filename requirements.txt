@@ -33,3 +33,11 @@ gunicorn
 # Rate limiting and caching
 slowapi
 redis
+
+# Persona Generation System
+openpyxl>=3.1.0         # Excel export
+pandas>=2.0.0           # Data manipulation
+rich>=13.0.0            # CLI dashboard
+click>=8.0.0            # CLI framework
+aiohttp>=3.9.0          # Async HTTP for LLM APIs
+anthropic>=0.40.0       # Claude API support
