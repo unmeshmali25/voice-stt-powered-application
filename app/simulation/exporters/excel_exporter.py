@@ -490,3 +490,280 @@ class PersonaExcelExporter:
             cell = ws.cell(row=row_idx, column=4, value=patterns_text)
             cell.border = self.BORDER_THIN
             cell.alignment = Alignment(wrap_text=True, vertical="top", horizontal="left")
+
+
+class IncrementalPersonaExporter:
+    """
+    Export personas incrementally during generation.
+
+    Opens the Excel file once and appends each batch as it completes,
+    ensuring progress is preserved if generation is interrupted.
+
+    Usage:
+        with IncrementalPersonaExporter(filepath) as exporter:
+            def batch_callback(batch_personas):
+                exporter.append_batch(batch_personas)
+            # ... generation with callback ...
+    """
+
+    # Style definitions (same as PersonaExcelExporter)
+    BORDER_THIN = Border(
+        left=Side(style="thin"),
+        right=Side(style="thin"),
+        top=Side(style="thin"),
+        bottom=Side(style="thin"),
+    )
+
+    def __init__(self, filepath: Path):
+        self.filepath = Path(filepath)
+        self.wb = None
+        self.next_agent_id = 1
+        self._start_id_num = 1
+
+    def __enter__(self):
+        """Open file for incremental export."""
+        self.filepath.parent.mkdir(parents=True, exist_ok=True)
+
+        if self.filepath.exists():
+            self.wb = load_workbook(self.filepath)
+            self._start_id_num = self._get_max_agent_id(self.wb) + 1
+            self.next_agent_id = self._start_id_num
+            logger.info(f"Appending to existing file (starting at agent_{self._start_id_num:03d}): {self.filepath}")
+        else:
+            self.wb = Workbook()
+            self.wb.remove(self.wb.active)
+            self._create_all_sheets(self.wb)
+            self._start_id_num = 1
+            self.next_agent_id = 1
+            logger.info(f"Creating new file: {self.filepath}")
+
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Final save and close."""
+        if self.wb:
+            self.wb.save(self.filepath)
+            total_added = self.next_agent_id - self._start_id_num
+            logger.info(f"Final save: {self.filepath} ({total_added} personas added)")
+
+    def append_batch(self, personas: List[AgentPersona]) -> None:
+        """
+        Append a batch of personas and save incrementally.
+
+        Args:
+            personas: List of personas to append in this batch
+        """
+        # Reassign agent IDs
+        for i, persona in enumerate(personas):
+            persona.agent_id = f"agent_{self.next_agent_id + i:03d}"
+            persona.generated_at = datetime.utcnow().isoformat()
+
+        self.next_agent_id += len(personas)
+
+        # Append to all sheets
+        self._append_to_summary_sheet(self.wb, personas)
+        self._append_to_attributes_sheet(self.wb, personas)
+        self._append_to_backstories_sheet(self.wb, personas)
+        self._append_to_behavioral_sheet(self.wb, personas)
+        self._append_to_patterns_sheet(self.wb, personas)
+
+        # Save after each batch
+        self.wb.save(self.filepath)
+
+    def _get_max_agent_id(self, wb) -> int:
+        """
+        Extract the highest agent_id number from existing file.
+
+        Args:
+            wb: The workbook to read from
+
+        Returns:
+            The highest agent_id number found (0 if none)
+        """
+        ws = wb["Summary"]
+        max_id = 0
+        for row in ws.iter_rows(min_row=2, max_col=1, values_only=True):
+            if row[0] and isinstance(row[0], str) and row[0].startswith("agent_"):
+                try:
+                    num = int(row[0].split("_")[1])
+                    max_id = max(max_id, num)
+                except (ValueError, IndexError):
+                    continue
+        return max_id
+
+    def _create_all_sheets(self, wb) -> None:
+        """Create all sheets with headers for a new file."""
+        # Create Summary sheet
+        ws = wb.create_sheet("Summary")
+        headers = [
+            "Agent ID", "Age", "Gender", "Income", "Location",
+            "Price Sensitivity", "Brand Loyalty", "Coupon Affinity", "Primary Categories",
+        ]
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col, value=header)
+            cell.fill = PersonaExcelExporter.HEADER_FILL
+            cell.font = PersonaExcelExporter.HEADER_FONT
+            cell.alignment = PersonaExcelExporter.HEADER_ALIGNMENT
+            cell.border = self.BORDER_THIN
+
+        # Create All Attributes sheet
+        ws = wb.create_sheet("All Attributes")
+        headers = [
+            "agent_id", "age", "age_group", "gender", "income_bracket",
+            "household_size", "has_children", "location_region",
+            "price_sensitivity", "brand_loyalty", "impulsivity", "tech_savviness",
+            "preferred_categories", "weekly_budget", "shopping_frequency", "avg_cart_value",
+            "pref_day_weekday", "pref_day_saturday", "pref_day_sunday",
+            "pref_time_morning", "pref_time_afternoon", "pref_time_evening",
+            "coupon_affinity", "deal_seeking_behavior", "generation_model",
+        ]
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col, value=header)
+            cell.fill = PersonaExcelExporter.HEADER_FILL
+            cell.font = PersonaExcelExporter.HEADER_FONT
+            cell.alignment = PersonaExcelExporter.HEADER_ALIGNMENT
+            cell.border = self.BORDER_THIN
+
+        # Create Backstories sheet
+        ws = wb.create_sheet("Backstories")
+        headers = ["Agent ID", "Age", "Gender", "Backstory"]
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col, value=header)
+            cell.fill = PersonaExcelExporter.HEADER_FILL
+            cell.font = PersonaExcelExporter.HEADER_FONT
+            cell.alignment = PersonaExcelExporter.HEADER_ALIGNMENT
+            cell.border = self.BORDER_THIN
+        ws.column_dimensions["D"].width = 80
+
+        # Create Behavioral Profile sheet
+        ws = wb.create_sheet("Behavioral Profile")
+        headers = [
+            "Agent ID", "Age", "Price Sensitivity", "Brand Loyalty", "Impulsivity",
+            "Tech Savviness", "Coupon Affinity", "Deal Seeking", "Shopping Frequency",
+        ]
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col, value=header)
+            cell.fill = PersonaExcelExporter.HEADER_FILL
+            cell.font = PersonaExcelExporter.HEADER_FONT
+            cell.alignment = PersonaExcelExporter.HEADER_ALIGNMENT
+            cell.border = self.BORDER_THIN
+
+        # Create Shopping Patterns sheet
+        ws = wb.create_sheet("Shopping Patterns")
+        headers = ["Agent ID", "Age", "Income", "Shopping Patterns"]
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col, value=header)
+            cell.fill = PersonaExcelExporter.HEADER_FILL
+            cell.font = PersonaExcelExporter.HEADER_FONT
+            cell.alignment = PersonaExcelExporter.HEADER_ALIGNMENT
+            cell.border = self.BORDER_THIN
+        ws.column_dimensions["D"].width = 80
+
+    def _append_to_summary_sheet(self, wb, personas: List[AgentPersona]) -> None:
+        """Append personas to the Summary sheet."""
+        ws = wb["Summary"]
+        start_row = ws.max_row + 1 if ws.max_row > 1 else 2
+
+        for row_idx, persona in enumerate(personas, start=start_row):
+            ws.cell(row=row_idx, column=1, value=persona.agent_id).border = self.BORDER_THIN
+            ws.cell(row=row_idx, column=2, value=persona.demographics.age).border = self.BORDER_THIN
+            ws.cell(row=row_idx, column=3, value=persona.demographics.gender).border = self.BORDER_THIN
+            ws.cell(row=row_idx, column=4, value=persona.demographics.income_bracket).border = self.BORDER_THIN
+            ws.cell(row=row_idx, column=5, value=persona.demographics.location_region).border = self.BORDER_THIN
+            ws.cell(row=row_idx, column=6, value=persona.behavioral_traits.price_sensitivity).border = self.BORDER_THIN
+            ws.cell(row=row_idx, column=7, value=persona.behavioral_traits.brand_loyalty).border = self.BORDER_THIN
+            ws.cell(row=row_idx, column=8, value=persona.coupon_behavior.coupon_affinity).border = self.BORDER_THIN
+            categories = ", ".join(persona.shopping_preferences.preferred_categories[:3])
+            ws.cell(row=row_idx, column=9, value=categories).border = self.BORDER_THIN
+
+    def _append_to_attributes_sheet(self, wb, personas: List[AgentPersona]) -> None:
+        """Append personas to the All Attributes sheet."""
+        ws = wb["All Attributes"]
+        start_row = ws.max_row + 1 if ws.max_row > 1 else 2
+
+        # Get column headers from row 1
+        headers = []
+        for col in range(1, ws.max_column + 1):
+            header = ws.cell(row=1, column=col).value
+            if header:
+                headers.append(header)
+
+        # Map headers to persona data
+        header_to_data = {
+            "agent_id": lambda p: p.agent_id,
+            "age": lambda p: p.demographics.age,
+            "age_group": lambda p: p.demographics.age_group,
+            "gender": lambda p: p.demographics.gender,
+            "income_bracket": lambda p: p.demographics.income_bracket,
+            "household_size": lambda p: p.household_size,
+            "has_children": lambda p: p.has_children,
+            "location_region": lambda p: p.location_region,
+            "price_sensitivity": lambda p: p.behavioral_traits.price_sensitivity,
+            "brand_loyalty": lambda p: p.behavioral_traits.brand_loyalty,
+            "impulsivity": lambda p: p.behavioral_traits.impulsivity,
+            "tech_savviness": lambda p: p.behavioral_traits.tech_savviness,
+            "preferred_categories": lambda p: ", ".join(p.shopping_preferences.preferred_categories),
+            "weekly_budget": lambda p: p.shopping_preferences.weekly_budget,
+            "shopping_frequency": lambda p: p.shopping_preferences.shopping_frequency,
+            "avg_cart_value": lambda p: p.shopping_preferences.avg_cart_value,
+            "pref_day_weekday": lambda p: p.temporal_patterns.preferred_days.get("weekday", 0.0),
+            "pref_day_saturday": lambda p: p.temporal_patterns.preferred_days.get("saturday", 0.0),
+            "pref_day_sunday": lambda p: p.temporal_patterns.preferred_days.get("sunday", 0.0),
+            "pref_time_morning": lambda p: p.temporal_patterns.preferred_times.get("morning", 0.0),
+            "pref_time_afternoon": lambda p: p.temporal_patterns.preferred_times.get("afternoon", 0.0),
+            "pref_time_evening": lambda p: p.temporal_patterns.preferred_times.get("evening", 0.0),
+            "coupon_affinity": lambda p: p.coupon_behavior.coupon_affinity,
+            "deal_seeking_behavior": lambda p: p.coupon_behavior.deal_seeking_behavior,
+            "generation_model": lambda p: p.generation_model or "",
+        }
+
+        for row_idx, persona in enumerate(personas, start=start_row):
+            for col, header in enumerate(headers, 1):
+                if header in header_to_data:
+                    value = header_to_data[header](persona)
+                    cell = ws.cell(row=row_idx, column=col, value=value)
+                    cell.border = self.BORDER_THIN
+
+    def _append_to_backstories_sheet(self, wb, personas: List[AgentPersona]) -> None:
+        """Append personas to the Backstories sheet."""
+        ws = wb["Backstories"]
+        start_row = ws.max_row + 1 if ws.max_row > 1 else 2
+
+        for row_idx, persona in enumerate(personas, start=start_row):
+            ws.cell(row=row_idx, column=1, value=persona.agent_id).border = self.BORDER_THIN
+            ws.cell(row=row_idx, column=2, value=persona.demographics.age).border = self.BORDER_THIN
+            ws.cell(row=row_idx, column=3, value=persona.demographics.gender).border = self.BORDER_THIN
+            cell = ws.cell(row=row_idx, column=4, value=persona.backstory)
+            cell.border = self.BORDER_THIN
+            cell.alignment = Alignment(wrap_text=True, vertical="top", horizontal="left")
+
+    def _append_to_behavioral_sheet(self, wb, personas: List[AgentPersona]) -> None:
+        """Append personas to the Behavioral Profile sheet."""
+        ws = wb["Behavioral Profile"]
+        start_row = ws.max_row + 1 if ws.max_row > 1 else 2
+
+        for row_idx, persona in enumerate(personas, start=start_row):
+            ws.cell(row=row_idx, column=1, value=persona.agent_id).border = self.BORDER_THIN
+            ws.cell(row=row_idx, column=2, value=persona.demographics.age).border = self.BORDER_THIN
+            ws.cell(row=row_idx, column=3, value=persona.behavioral_traits.price_sensitivity).border = self.BORDER_THIN
+            ws.cell(row=row_idx, column=4, value=persona.behavioral_traits.brand_loyalty).border = self.BORDER_THIN
+            ws.cell(row=row_idx, column=5, value=persona.behavioral_traits.impulsivity).border = self.BORDER_THIN
+            ws.cell(row=row_idx, column=6, value=persona.behavioral_traits.tech_savviness).border = self.BORDER_THIN
+            ws.cell(row=row_idx, column=7, value=persona.coupon_behavior.coupon_affinity).border = self.BORDER_THIN
+            ws.cell(row=row_idx, column=8, value=persona.coupon_behavior.deal_seeking_behavior).border = self.BORDER_THIN
+            ws.cell(row=row_idx, column=9, value=persona.shopping_preferences.shopping_frequency).border = self.BORDER_THIN
+
+    def _append_to_patterns_sheet(self, wb, personas: List[AgentPersona]) -> None:
+        """Append personas to the Shopping Patterns sheet."""
+        ws = wb["Shopping Patterns"]
+        start_row = ws.max_row + 1 if ws.max_row > 1 else 2
+
+        for row_idx, persona in enumerate(personas, start=start_row):
+            ws.cell(row=row_idx, column=1, value=persona.agent_id).border = self.BORDER_THIN
+            ws.cell(row=row_idx, column=2, value=persona.demographics.age).border = self.BORDER_THIN
+            ws.cell(row=row_idx, column=3, value=persona.demographics.income_bracket).border = self.BORDER_THIN
+
+            patterns_text = "\n".join(f"• {p}" for p in persona.sample_shopping_patterns)
+            cell = ws.cell(row=row_idx, column=4, value=patterns_text)
+            cell.border = self.BORDER_THIN
+            cell.alignment = Alignment(wrap_text=True, vertical="top", horizontal="left")

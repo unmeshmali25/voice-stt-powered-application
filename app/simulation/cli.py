@@ -17,7 +17,7 @@ import click
 from rich.console import Console
 
 from app.simulation.config import SimulationConfig
-from app.simulation.exporters.excel_exporter import PersonaExcelExporter
+from app.simulation.exporters.excel_exporter import IncrementalPersonaExporter, PersonaExcelExporter
 from app.simulation.exporters.preview_dashboard import (
     PersonaPreviewDashboard,
     show_cost_estimate,
@@ -99,6 +99,11 @@ def cli():
     is_flag=True,
     help="Auto-confirm export (skip prompt)",
 )
+@click.option(
+    "--incremental",
+    is_flag=True,
+    help="Save personas incrementally after each batch (cancel-safe)",
+)
 def generate(
     count: int,
     output: str,
@@ -109,6 +114,7 @@ def generate(
     temperature: float,
     no_preview: bool,
     yes: bool,
+    incremental: bool,
 ):
     """Generate agent personas with LLM."""
     console.print()
@@ -162,6 +168,13 @@ def generate(
     # Show fallback models
     console.print(f"[dim]Fallback models: {' -> '.join(config.fallback_models)}[/dim]")
 
+    # Show incremental mode message
+    if incremental and mode == "append":
+        console.print("[dim]Incremental mode: ON (saving after each batch)[/dim]")
+    elif incremental and mode != "append":
+        console.print("[yellow]Warning: --incremental only works with --append. Using standard mode.[/yellow]")
+        incremental = False
+
     # Create generator
     generator = PersonaGenerator(config)
 
@@ -170,7 +183,25 @@ def generate(
     start_time = datetime.now()
 
     try:
-        personas, cost_summary = asyncio.run(generator.generate_batch(count=count, show_progress=True))
+        if incremental and mode == "append":
+            # Use incremental export with streaming generator
+            with IncrementalPersonaExporter(output_path) as exporter:
+                batch_count = [0]  # Use list to allow modification in closure
+
+                def batch_callback(batch_personas):
+                    batch_count[0] += len(batch_personas)
+                    console.print(f"[dim]Saved batch of {len(batch_personas)} personas (total saved: {batch_count[0]})[/dim]")
+
+                personas, cost_summary = asyncio.run(
+                    generator.generate_batch_streaming(
+                        count=count,
+                        show_progress=True,
+                        batch_callback=batch_callback,
+                    )
+                )
+        else:
+            # Standard generation (non-incremental)
+            personas, cost_summary = asyncio.run(generator.generate_batch(count=count, show_progress=True))
     except Exception as e:
         console.print(f"[red]Error generating personas:[/red] {e}")
         sys.exit(1)
@@ -201,18 +232,19 @@ def generate(
             dashboard.show_export_cancelled()
             return
 
-    # Export to Excel
-    try:
-        exporter = PersonaExcelExporter(personas)
-        if mode == "append":
-            exporter.append(output_path)
-        else:
-            exporter.export(output_path)
-    except Exception as e:
-        console.print(f"[red]Error exporting to Excel:[/red] {e}")
-        sys.exit(1)
+    # Export to Excel (skip if incremental mode already saved)
+    if not (incremental and mode == "append"):
+        try:
+            exporter = PersonaExcelExporter(personas)
+            if mode == "append":
+                exporter.append(output_path)
+            else:
+                exporter.export(output_path)
+        except Exception as e:
+            console.print(f"[red]Error exporting to Excel:[/red] {e}")
+            sys.exit(1)
 
-    dashboard.show_export_success(output_path, len(personas))
+        dashboard.show_export_success(output_path, len(personas))
 
     # Save preview JSON
     if config.save_preview_json and mode == "create":

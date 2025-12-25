@@ -7,7 +7,7 @@ Handles batch generation with concurrency control, validation, and error handlin
 import asyncio
 import logging
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 from app.simulation.config import SimulationConfig
 from app.simulation.generators.llm_client import LLMClient, CostTracker
@@ -90,6 +90,84 @@ class PersonaGenerator:
                     error_msg = f"agent_{agent_num:03d} failed validation"
                     logger.warning(error_msg)
                     errors.append(error_msg)
+
+        if show_progress:
+            logger.info(f"Generated {len(personas)}/{count} personas successfully")
+            if errors:
+                logger.warning(f"Encountered {len(errors)} errors")
+
+        cost_summary = self.cost_tracker.get_summary()
+        return personas, cost_summary
+
+    async def generate_batch_streaming(
+        self,
+        count: int = 10,
+        show_progress: bool = True,
+        batch_callback: Optional[Callable[[List[AgentPersona]], None]] = None,
+    ) -> Tuple[List[AgentPersona], dict]:
+        """
+        Generate personas with streaming callback for incremental export.
+
+        This method is similar to generate_batch() but calls a callback function
+        after each batch completes, enabling incremental saving to disk.
+
+        Args:
+            count: Number of personas to generate
+            show_progress: Whether to log progress messages
+            batch_callback: Optional function called after each batch with new personas
+
+        Returns:
+            Tuple of (list of generated AgentPersona objects, cost_summary dict)
+        """
+        if show_progress:
+            logger.info(f"Generating {count} personas using {self.config.llm_provider}")
+            logger.info(f"Fallback models: {' -> '.join(self.config.fallback_models)}")
+
+        personas = []
+        errors = []
+
+        # Generate in batches to respect rate limits
+        batch_size = self.config.max_concurrent_requests
+
+        for i in range(0, count, batch_size):
+            batch_count = min(batch_size, count - i)
+            batch_start = i
+
+            # Create tasks for this batch
+            batch_tasks = [
+                self._generate_single_with_tracking(
+                    agent_id=f"agent_{j+1:03d}",
+                    diversity_index=j % len(CVS_DIVERSITY_NOTES),
+                )
+                for j in range(batch_start, batch_start + batch_count)
+            ]
+
+            # Execute batch concurrently
+            batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+
+            # Process results - collect batch personas separately
+            batch_personas = []
+            for j, result in enumerate(batch_results):
+                agent_num = batch_start + j + 1
+                if isinstance(result, Exception):
+                    error_msg = f"Failed to generate agent_{agent_num:03d}: {result}"
+                    logger.error(error_msg)
+                    errors.append(error_msg)
+                elif self._validate_persona(result):
+                    batch_personas.append(result)
+                    personas.append(result)
+                    if show_progress:
+                        logger.info(f"Generated {agent_num}/{count}: {result.agent_id} - "
+                                   f"{result.demographics.age}yo {result.demographics.gender}, "
+                                   f"{result.demographics.income_bracket} income")
+                else:
+                    error_msg = f"agent_{agent_num:03d} failed validation"
+                    logger.warning(error_msg)
+                    errors.append(error_msg)
+
+            # Call callback with this batch for incremental export
+            if batch_callback and batch_personas:
+                batch_callback(batch_personas)
 
         if show_progress:
             logger.info(f"Generated {len(personas)}/{count} personas successfully")
