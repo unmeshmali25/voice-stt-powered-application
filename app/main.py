@@ -48,6 +48,7 @@ from app.session_tracking import (
 
 # Import route modules
 from app.routes import stores as stores_routes
+from app.offer_engine.routes import router as offer_engine_routes
 from app.routes import cart as cart_routes
 from app.routes import orders as orders_routes
 
@@ -267,16 +268,41 @@ def get_db():
         db.close()
 
 
-def verify_token(authorization: str = Header(None)) -> Dict[str, Any]:
+def verify_token(authorization: str = Header(None), db: Session = Depends(get_db)) -> Dict[str, Any]:
     """
     Verify Supabase JWT token and return user data.
     Expects Authorization header: "Bearer <token>"
+
+    SIMULATION MODE: When SIMULATION_MODE=true, accepts "Bearer dev:<agent_id>"
     """
     if not authorization:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing authorization header"
         )
+
+    # SIMULATION MODE BYPASS (B-8)
+    if os.getenv("SIMULATION_MODE", "false").lower() == "true":
+        if authorization.startswith("Bearer dev:"):
+            agent_id = authorization.replace("Bearer dev:", "")
+            # Look up agent by agent_id
+            result = db.execute(
+                text("SELECT user_id FROM agents WHERE agent_id = :aid AND is_active = true"),
+                {"aid": agent_id}
+            ).fetchone()
+            if result:
+                logger.info(f"Simulation auth: agent {agent_id} -> user {result.user_id}")
+                return {
+                    "user_id": str(result.user_id),
+                    "email": f"{agent_id}@simulation.local",
+                    "is_simulation": True,
+                    "payload": {"sub": str(result.user_id), "agent_id": agent_id}
+                }
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail=f"Unknown agent: {agent_id}"
+                )
 
     if not authorization.startswith("Bearer "):
         raise HTTPException(
@@ -436,6 +462,7 @@ orders_routes.set_dependencies(get_db, verify_token)
 app.include_router(stores_routes.router)
 app.include_router(cart_routes.router)
 app.include_router(orders_routes.router)
+app.include_router(offer_engine_routes)  # Offer engine (simulation only)
 
 
 # --- Routes ---
