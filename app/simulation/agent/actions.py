@@ -361,17 +361,18 @@ class ShoppingActions:
             self.db.execute(
                 text("""
                 INSERT INTO order_items
-                (id, order_id, product_id, quantity, unit_price, line_total)
+                (id, order_id, product_id, product_name, product_price, quantity, line_total)
                 VALUES
-                (:id, :order_id, :product_id, :quantity, :price, :total)
+                (:id, :order_id, :product_id, :product_name, :product_price, :quantity, :line_total)
             """),
                 {
                     "id": str(uuid.uuid4()),
                     "order_id": order_id,
                     "product_id": item["product_id"],
+                    "product_name": item.get("product_name", "Unknown Product"),
+                    "product_price": item.get("price", 0.0),
                     "quantity": item.get("quantity", 1),
-                    "price": item.get("price", 0.0),
-                    "total": item.get("price", 0.0) * item.get("quantity", 1),
+                    "line_total": item.get("price", 0.0) * item.get("quantity", 1),
                 },
             )
 
