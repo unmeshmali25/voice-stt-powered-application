@@ -53,7 +53,7 @@ class OfferAssigner:
         # 1. Expire ALL active offers for user
         expired_count = self.expiration_handler.expire_all_for_user(user_id)
 
-        # 2. Get recently assigned coupon IDs to exclude
+        # 2. Get recently assigned coupon IDs to exclude (exclude expired offers too)
         exclude_ids = self._get_recent_coupon_ids(user_id)
 
         # 3. Get frontstore offers

@@ -15,11 +15,37 @@ import random
 import logging
 from datetime import datetime
 from typing import List, Dict, Any, Optional
+from decimal import Decimal
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
+
+
+def calculate_discount(coupon: Dict, amount: Decimal) -> Decimal:
+    """
+    Calculate discount amount based on coupon type.
+    Matches real app coupon calculation logic.
+    """
+    discount_type = coupon.get("discount_type")
+    discount_value = coupon.get("discount_value", Decimal("0"))
+    max_discount = coupon.get("max_discount")
+
+    if discount_type == "percent":
+        discount = amount * (discount_value / Decimal("100"))
+        if max_discount:
+            discount = min(discount, max_discount)
+        return discount
+    elif discount_type == "fixed":
+        return min(discount_value, amount)
+    elif discount_type == "bogo":
+        half_amount = amount / 2
+        discount = half_amount * (discount_value / Decimal("100"))
+        return discount
+    elif discount_type == "free_shipping":
+        return Decimal("0")
+    return Decimal("0")
 
 
 class ShoppingActions:
@@ -38,6 +64,82 @@ class ShoppingActions:
             db: SQLAlchemy Session instance
         """
         self.db = db
+
+    def add_to_cart_table(
+        self,
+        user_id: str,
+        store_id: str,
+        product_id: str,
+        product_name: str,
+        price: float,
+        quantity: int,
+    ) -> None:
+        """
+        Add item to cart_items table (persistent storage).
+        Matches real app cart behavior.
+        """
+        self.db.execute(
+            text("""
+                INSERT INTO cart_items (user_id, store_id, product_id, quantity)
+                VALUES (:user_id, :store_id, :product_id, :quantity)
+                ON CONFLICT (user_id, store_id, product_id)
+                DO UPDATE SET quantity = cart_items.quantity + EXCLUDED.quantity
+            """),
+            {
+                "user_id": user_id,
+                "store_id": store_id,
+                "product_id": product_id,
+                "quantity": quantity,
+            },
+        )
+
+    def add_coupon_to_cart(self, user_id: str, coupon_id: str) -> None:
+        """
+        Add coupon to cart_coupons table.
+        Matches real app coupon selection behavior.
+        """
+        self.db.execute(
+            text("""
+                INSERT INTO cart_coupons (user_id, coupon_id)
+                VALUES (:user_id, :coupon_id)
+                ON CONFLICT (user_id, coupon_id) DO NOTHING
+            """),
+            {"user_id": user_id, "coupon_id": coupon_id},
+        )
+
+    def get_eligible_coupons(self, user_id: str, cart_items: List[dict]) -> List[dict]:
+        """
+        Get all user's coupons (eligibility checked in shopping_graph).
+        Returns: List of coupon dictionaries
+        """
+        result = self.db.execute(
+            text("""
+                SELECT c.id, c.type, c.discount_details, c.category_or_brand,
+                       c.discount_type, c.discount_value, c.min_purchase_amount, c.max_discount
+                FROM coupons c
+                JOIN user_coupons uc ON c.id = uc.coupon_id
+                WHERE uc.user_id = :user_id
+                  AND uc.eligible_until > NOW()
+                  AND c.expiration_date > NOW()
+            """),
+            {"user_id": user_id},
+        )
+
+        coupons = []
+        for row in result.fetchall():
+            coupon = {
+                "id": str(row[0]),
+                "type": row[1],
+                "discount_details": row[2],
+                "category_or_brand": (row[3] or "").lower(),
+                "discount_type": row[4],
+                "discount_value": Decimal(str(row[5])) if row[5] else Decimal("0"),
+                "min_purchase_amount": Decimal(str(row[6])) if row[6] else Decimal("0"),
+                "max_discount": Decimal(str(row[7])) if row[7] else None,
+            }
+            coupons.append(coupon)
+
+        return coupons
 
     def create_session(
         self, user_id: str, store_id: str, simulated_timestamp: datetime
@@ -183,6 +285,7 @@ class ShoppingActions:
         self,
         session_id: str,
         user_id: str,
+        store_id: str,
         product_id: str,
         product_name: str,
         price: float,
@@ -195,12 +298,18 @@ class ShoppingActions:
         Args:
             session_id: Current shopping session ID
             user_id: User UUID
+            store_id: Store UUID
             product_id: Product UUID
             product_name: Product name for event payload
             price: Product price
             quantity: Quantity to add
             simulated_timestamp: Simulated datetime
         """
+        # Persist to cart_items table
+        self.add_to_cart_table(
+            user_id, store_id, product_id, product_name, price, quantity
+        )
+
         # Create cart_add_item event
         self._record_event(
             session_id=session_id,
@@ -292,6 +401,9 @@ class ShoppingActions:
             discount_details: Description of the discount
             simulated_timestamp: Simulated datetime
         """
+        # Persist to cart_coupons table
+        self.add_coupon_to_cart(user_id, coupon_id)
+
         # Record coupon_apply event
         self._record_event(
             session_id=session_id,
@@ -308,96 +420,244 @@ class ShoppingActions:
         session_id: str,
         user_id: str,
         store_id: str,
-        cart_items: List[Dict[str, Any]],
-        cart_total: float,
-        coupons_applied: List[str],
         simulated_timestamp: datetime,
-    ) -> str:
+    ) -> Optional[str]:
         """
-        Complete checkout - create order record (no actual payment).
+        Complete checkout with proper coupon application (matching real app).
+        NO inventory checks - assumes all items available.
 
         Args:
             session_id: Current shopping session ID
             user_id: User UUID
             store_id: Store UUID
-            cart_items: List of cart item dicts
-            cart_total: Total cart value
-            coupons_applied: List of applied coupon IDs
             simulated_timestamp: Simulated datetime
 
         Returns:
-            Order ID (UUID string)
+            Order ID (UUID string) or None if cart empty
         """
+        # 1. Get cart items from database (no inventory join)
+        items_result = self.db.execute(
+            text("""
+                SELECT ci.id, ci.quantity, p.id as product_id, p.name, p.price,
+                       p.category, p.brand
+                FROM cart_items ci
+                JOIN products p ON ci.product_id = p.id
+                WHERE ci.user_id = :user_id AND ci.store_id = :store_id
+            """),
+            {"user_id": user_id, "store_id": store_id},
+        )
+        cart_items = items_result.fetchall()
+
+        if not cart_items:
+            # No items - abandon instead
+            self.abandon_session(session_id, user_id, [], 0.0, simulated_timestamp)
+            return None
+
+        # 2. Get coupons from cart_coupons
+        coupons_result = self.db.execute(
+            text("""
+                SELECT c.id, c.type, c.discount_details, c.category_or_brand,
+                       c.discount_type, c.discount_value, c.min_purchase_amount, c.max_discount
+                FROM cart_coupons cc
+                JOIN coupons c ON cc.coupon_id = c.id
+                WHERE cc.user_id = :user_id
+            """),
+            {"user_id": user_id},
+        )
+        coupons = coupons_result.fetchall()
+
+        # 3. Separate coupons by type
+        frontstore_coupons = []
+        category_coupons = []
+        brand_coupons = []
+
+        for c in coupons:
+            coupon_data = {
+                "id": str(c[0]),
+                "type": c[1],
+                "discount_details": c[2],
+                "category_or_brand": (c[3] or "").lower(),
+                "discount_type": c[4],
+                "discount_value": Decimal(str(c[5])) if c[5] else Decimal("0"),
+                "min_purchase_amount": Decimal(str(c[6])) if c[6] else Decimal("0"),
+                "max_discount": Decimal(str(c[7])) if c[7] else None,
+            }
+            if c[1] == "frontstore":
+                frontstore_coupons.append(coupon_data)
+            elif c[1] == "category":
+                category_coupons.append(coupon_data)
+            elif c[1] == "brand":
+                brand_coupons.append(coupon_data)
+
+        # 4. Calculate totals and prepare order items
+        subtotal = Decimal("0")
+        order_items_data = []
+        item_discount_total = Decimal("0")
+        categories_with_discount = set()
+        applied_coupon_ids = set()
+
+        for item in cart_items:
+            quantity = item[1]
+            product_id = str(item[2])
+            product_name = item[3]
+            unit_price = Decimal(str(item[4])) if item[4] else Decimal("0")
+            category = (item[5] or "").lower()
+            brand = (item[6] or "").lower()
+            line_total = unit_price * quantity
+            subtotal += line_total
+
+            # Find best applicable coupon
+            best_discount = Decimal("0")
+            best_coupon_id = None
+
+            for coupon in category_coupons:
+                if (
+                    coupon["category_or_brand"] == category
+                    and category not in categories_with_discount
+                ):
+                    discount = calculate_discount(coupon, line_total)
+                    if discount > best_discount:
+                        best_discount = discount
+                        best_coupon_id = coupon["id"]
+
+            if not best_coupon_id:
+                for coupon in brand_coupons:
+                    if coupon["category_or_brand"] == brand:
+                        discount = calculate_discount(coupon, line_total)
+                        if discount > best_discount:
+                            best_discount = discount
+                            best_coupon_id = coupon["id"]
+
+            if best_coupon_id and best_discount > 0:
+                for coupon in category_coupons + brand_coupons:
+                    if coupon["id"] == best_coupon_id and coupon["type"] == "category":
+                        categories_with_discount.add(category)
+                        break
+                applied_coupon_ids.add(best_coupon_id)
+                item_discount_total += best_discount
+
+            order_items_data.append(
+                {
+                    "product_id": product_id,
+                    "product_name": product_name,
+                    "product_price": unit_price,
+                    "quantity": quantity,
+                    "applied_coupon_id": best_coupon_id,
+                    "discount_amount": best_discount,
+                    "line_total": line_total - best_discount,
+                }
+            )
+
+        # 5. Calculate frontstore discount
+        subtotal_after_items = subtotal - item_discount_total
+        frontstore_discount_amount = Decimal("0")
+        frontstore_coupon_id = None
+
+        if frontstore_coupons:
+            frontstore_coupons.sort(key=lambda x: x["discount_value"], reverse=True)
+            for coupon in frontstore_coupons:
+                if subtotal_after_items >= coupon["min_purchase_amount"]:
+                    discount = calculate_discount(coupon, subtotal_after_items)
+                    if discount > 0:
+                        frontstore_discount_amount = discount
+                        frontstore_coupon_id = coupon["id"]
+                        applied_coupon_ids.add(frontstore_coupon_id)
+                        break
+
+        # 6. Calculate final totals
+        discount_total = item_discount_total + frontstore_discount_amount
+        final_total = subtotal - discount_total
+        if final_total < 0:
+            final_total = Decimal("0")
+
+        # 7. Create order
         order_id = str(uuid.uuid4())
-
-        # Calculate discount (simplified - 10% if coupons applied)
-        discount_amount = cart_total * 0.1 if coupons_applied else 0.0
-        final_total = cart_total - discount_amount
-
-        # Create order record
         self.db.execute(
             text("""
-            INSERT INTO orders
-            (id, user_id, store_id, status, subtotal, discount_total, final_total,
-             item_count, created_at, is_simulated)
-            VALUES
-            (:id, :user_id, :store_id, 'completed', :subtotal, :discount_total,
-              :final_total, :item_count, :created_at, true)
-        """),
+                INSERT INTO orders (id, user_id, store_id, subtotal, discount_total,
+                                 final_total, status, item_count, shopping_session_id, created_at, is_simulated)
+                VALUES (:id, :user_id, :store_id, :subtotal, :discount_total,
+                        :final_total, 'completed', :item_count, :shopping_session_id, :created_at, true)
+            """),
             {
                 "id": order_id,
                 "user_id": user_id,
                 "store_id": store_id,
-                "subtotal": cart_total,
-                "discount_total": discount_amount,
-                "final_total": final_total,
+                "subtotal": float(subtotal),
+                "discount_total": float(discount_total),
+                "final_total": float(final_total),
                 "item_count": len(cart_items),
+                "shopping_session_id": session_id,
                 "created_at": simulated_timestamp,
             },
         )
 
-        # Create order items
-        for item in cart_items:
+        # 8. Create order items with coupon data
+        for item_data in order_items_data:
             self.db.execute(
                 text("""
-                INSERT INTO order_items
-                (id, order_id, product_id, product_name, product_price, quantity, line_total)
-                VALUES
-                (:id, :order_id, :product_id, :product_name, :product_price, :quantity, :line_total)
-            """),
+                    INSERT INTO order_items (id, order_id, product_id, product_name,
+                                           product_price, quantity, applied_coupon_id,
+                                           discount_amount, line_total)
+                    VALUES (:id, :order_id, :product_id, :product_name,
+                            :product_price, :quantity, :applied_coupon_id,
+                            :discount_amount, :line_total)
+                """),
                 {
                     "id": str(uuid.uuid4()),
                     "order_id": order_id,
-                    "product_id": item["product_id"],
-                    "product_name": item.get("product_name", "Unknown Product"),
-                    "product_price": item.get("price", 0.0),
-                    "quantity": item.get("quantity", 1),
-                    "line_total": item.get("price", 0.0) * item.get("quantity", 1),
+                    "product_id": item_data["product_id"],
+                    "product_name": item_data["product_name"],
+                    "product_price": float(item_data["product_price"]),
+                    "quantity": item_data["quantity"],
+                    "applied_coupon_id": item_data["applied_coupon_id"],
+                    "discount_amount": float(item_data["discount_amount"]),
+                    "line_total": float(item_data["line_total"]),
                 },
             )
 
-        # Update session status
+        # 9. Track coupon redemptions
+        for coupon_id in applied_coupon_ids:
+            self.db.execute(
+                text("""
+                    INSERT INTO coupon_interactions (user_id, coupon_id, action, order_id)
+                    VALUES (:user_id, :coupon_id, 'redeemed', :order_id)
+                """),
+                {"user_id": user_id, "coupon_id": coupon_id, "order_id": order_id},
+            )
+
+        # 10. Clear cart
+        self.db.execute(
+            text("DELETE FROM cart_items WHERE user_id = :user_id"),
+            {"user_id": user_id},
+        )
+        self.db.execute(
+            text("DELETE FROM cart_coupons WHERE user_id = :user_id"),
+            {"user_id": user_id},
+        )
+
+        # 11. Update session status
         self.db.execute(
             text("""
-            UPDATE shopping_sessions
-            SET status = 'completed', ended_at = :ended_at
-            WHERE id = :id
-        """),
+                UPDATE shopping_sessions
+                SET status = 'completed', ended_at = :ended_at
+                WHERE id = :id
+            """),
             {"id": session_id, "ended_at": simulated_timestamp},
         )
 
-        # Record checkout_complete event
+        # 12. Record event
         self._record_event(
             session_id=session_id,
             user_id=user_id,
             event_type="checkout_complete",
             payload={
                 "order_id": order_id,
-                "subtotal": cart_total,
-                "discount": discount_amount,
-                "total": final_total,
+                "subtotal": float(subtotal),
+                "discount": float(discount_total),
+                "total": float(final_total),
                 "item_count": len(cart_items),
-                "coupons_used": len(coupons_applied),
+                "coupons_used": len(applied_coupon_ids),
             },
             timestamp=simulated_timestamp,
         )
@@ -433,6 +693,16 @@ class ShoppingActions:
             WHERE id = :id
         """),
             {"id": session_id, "ended_at": simulated_timestamp},
+        )
+
+        # Clear cart for abandoned sessions
+        self.db.execute(
+            text("DELETE FROM cart_items WHERE user_id = :user_id"),
+            {"user_id": user_id},
+        )
+        self.db.execute(
+            text("DELETE FROM cart_coupons WHERE user_id = :user_id"),
+            {"user_id": user_id},
         )
 
         # Record cart_abandon event

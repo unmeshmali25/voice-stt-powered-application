@@ -234,6 +234,8 @@ class OfferScheduler:
             {"now": current_time, **agent_params},
         ).fetchall()
 
+        logger.debug(f"Existing users past refresh time: {len(existing_users)}")
+
         existing_ids = {str(row.id) for row in existing_users}
 
         # Get all agent users who may not be enrolled yet
@@ -268,6 +270,10 @@ class OfferScheduler:
         enrolled_ids = {str(row.id) for row in enrolled_users}
 
         new_user_ids = all_agent_ids - enrolled_ids
+
+        logger.debug(
+            f"All active agents: {len(all_agent_ids)}, Enrolled agents: {len(enrolled_ids)}, New agents: {len(new_user_ids)}"
+        )
 
         # Combine: users needing refresh + new users needing initial enrollment
         all_needing_refresh = existing_ids | new_user_ids

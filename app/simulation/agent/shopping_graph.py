@@ -173,6 +173,7 @@ def add_to_cart_node(state: AgentState) -> dict:
             actions.add_to_cart(
                 session_id=state["session_id"],
                 user_id=state["user_id"],
+                store_id=state["store_id"],
                 product_id=product["id"],
                 product_name=product["name"],
                 price=price,
@@ -186,6 +187,8 @@ def add_to_cart_node(state: AgentState) -> dict:
                     "product_name": product["name"],
                     "price": price,
                     "quantity": quantity,
+                    "category": product.get("category", ""),
+                    "brand": product.get("brand", ""),
                 }
             )
             cart_total += price * quantity
@@ -200,7 +203,7 @@ def add_to_cart_node(state: AgentState) -> dict:
 @traceable(name="view_coupons")
 def view_coupons_node(state: AgentState) -> dict:
     """
-    View available coupons and optionally apply them.
+    View available coupons and check eligibility against cart.
 
     Higher coupon_affinity = more likely to apply coupons.
 
@@ -216,30 +219,62 @@ def view_coupons_node(state: AgentState) -> dict:
         simulated_timestamp=state["simulated_timestamp"],
     )
 
-    coupons_applied = []
-    coupon_affinity = float(state.get("coupon_affinity", 0.5))
+    # Get cart items with product details
     cart_items = state.get("cart_items", [])
 
-    # Try to apply coupons if we have items
+    # Check eligibility
+    coupons_applied = []
+    coupon_affinity = float(state.get("coupon_affinity", 0.5))
+
     if cart_items and coupons:
-        # Sort by type - frontstore first (most valuable)
+        # Extract cart metadata
+        categories = set()
+        brands = set()
+        for item in cart_items:
+            # Get category/brand from item (already in products_data)
+            categories.add(item.get("category", "").lower())
+            brands.add(item.get("brand", "").lower())
+
+        # Sort coupons by type - frontstore first
         sorted_coupons = sorted(
             coupons, key=lambda c: 0 if c["type"] == "frontstore" else 1
         )
 
-        for coupon in sorted_coupons[:2]:  # Max 2 coupons
-            # Apply based on coupon affinity
-            apply_prob = 0.3 + (coupon_affinity * 0.6)
+        for coupon in sorted_coupons:
+            # Check eligibility
+            is_eligible = False
 
-            if random.random() < apply_prob:
-                actions.apply_coupon(
-                    session_id=state["session_id"],
-                    user_id=state["user_id"],
-                    coupon_id=coupon["id"],
-                    discount_details=coupon.get("discount_details", ""),
-                    simulated_timestamp=state["simulated_timestamp"],
-                )
-                coupons_applied.append(coupon["id"])
+            if coupon["type"] == "frontstore":
+                # Check min purchase
+                min_amount = float(coupon.get("min_purchase_amount", 0) or 0)
+                cart_total = state.get("cart_total", 0.0)
+                if cart_total >= min_amount:
+                    is_eligible = True
+
+            elif coupon["type"] == "category":
+                # Check if cart has matching category
+                coupon_cat = (coupon.get("category_or_brand") or "").lower()
+                if coupon_cat in categories:
+                    is_eligible = True
+
+            elif coupon["type"] == "brand":
+                # Check if cart has matching brand
+                coupon_brand = (coupon.get("category_or_brand") or "").lower()
+                if coupon_brand in brands:
+                    is_eligible = True
+
+            # Apply if eligible and based on coupon_affinity
+            if is_eligible:
+                apply_prob = 0.3 + (coupon_affinity * 0.6)
+                if random.random() < apply_prob:
+                    actions.apply_coupon(
+                        session_id=state["session_id"],
+                        user_id=state["user_id"],
+                        coupon_id=coupon["id"],
+                        discount_details=coupon.get("discount_details", ""),
+                        simulated_timestamp=state["simulated_timestamp"],
+                    )
+                    coupons_applied.append(coupon["id"])
 
     return {
         "coupons_available": coupons,
@@ -312,9 +347,6 @@ def complete_checkout_node(state: AgentState) -> dict:
         session_id=state["session_id"],
         user_id=state["user_id"],
         store_id=state["store_id"],
-        cart_items=state.get("cart_items", []),
-        cart_total=state.get("cart_total", 0.0),
-        coupons_applied=state.get("coupons_applied", []),
         simulated_timestamp=state["simulated_timestamp"],
     )
 
