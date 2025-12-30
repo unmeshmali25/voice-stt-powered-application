@@ -58,11 +58,13 @@ class TimeService:
         if not self._is_active or not self._calendar_start:
             return None
 
-        # Calculate simulated days from start
+        # Calculate simulated days from start (including fractional days)
         simulated_now = self.now()
-        days_elapsed = (simulated_now - self._simulation_start_time).days
+        exact_days = (
+            simulated_now - self._simulation_start_time
+        ).total_seconds() / 86400
 
-        return self._calendar_start + timedelta(days=days_elapsed)
+        return self._calendar_start + timedelta(days=exact_days)
 
     def start_simulation(self, calendar_start: date) -> None:
         """Begin simulation from specified calendar date."""

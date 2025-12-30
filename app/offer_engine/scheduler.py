@@ -68,8 +68,8 @@ class OfferScheduler:
                 user_id=user_id, refreshed=False, reason="simulation_mode_disabled"
             )
 
-        # Check cooldown
-        if self._should_skip_cooldown(user_id):
+        # Skip cooldown in simulation mode (only enforce in production)
+        if not self.config.simulation_mode and self._should_skip_cooldown(user_id):
             return RefreshResult(user_id=user_id, refreshed=False, reason="cooldown")
 
         # Check if refresh is needed

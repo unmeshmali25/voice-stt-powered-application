@@ -126,7 +126,8 @@ class SimulationOrchestrator:
 
         Args:
             db: SQLAlchemy Session
-            time_scale: Time compression ratio (24 = 1 real hour = 1 simulated day)
+            time_scale: Time compression ratio (24 = 1 real hour = 24 simulated hours)
+                        This overrides TIME_SCALE environment variable.
             default_store_id: Default store for shopping sessions
             process_all_agents: If True, scheduler processes all agents. If False, only processes filtered agents
             debug_mode: Enable debug logging in dashboard
@@ -139,6 +140,14 @@ class SimulationOrchestrator:
 
         # Initialize offer engine
         self.scheduler = get_scheduler(db)
+
+        # Sync time_scale if CLI parameter differs from env config
+        if self.time_scale != self.scheduler.config.time_scale:
+            old_scale = self.scheduler.config.time_scale
+            self.scheduler.config.time_scale = self.time_scale
+            logger.info(
+                f"Updated scheduler time_scale to {self.time_scale} (was {old_scale})"
+            )
 
         # Initialize actions
         set_actions(db)
@@ -230,7 +239,9 @@ class SimulationOrchestrator:
             logger.info(f"Started simulation at {calendar_start}")
 
         # Calculate timing
-        # At time_scale=24: advance 1 simulated hour every (3600/24) = 150 real seconds
+        # Each cycle advances 1 simulated hour. Interval calculated to achieve time_scale cycles per real hour.
+        # At time_scale=96: 37.5 real seconds per cycle (3600/96)
+        # Results in 96 cycles per real hour, each advancing 1 simulated hour.
         advance_interval_seconds = 3600 / self.time_scale
 
         start_time = time.time()
@@ -318,10 +329,10 @@ class SimulationOrchestrator:
 
     async def _run_cycle(self, agents: List[Dict[str, Any]]):
         """Execute one simulation cycle."""
-        # 1. Advance simulation time by 1 hour
+        # 1. Advance simulation time by 1 simulated hour
         # Pass agent_ids to scheduler for filtering
         advance_result = self.scheduler.advance_simulation_time(
-            hours=1.0,
+            hours=1.0 / self.time_scale,  # Each cycle advances 1 simulated hour
             agent_ids=self.agent_ids,
             process_all_agents=self.process_all_agents,
         )
