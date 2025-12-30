@@ -344,6 +344,8 @@ class ShoppingActions:
             List of available coupon dictionaries
         """
         # Get active coupons from user's wallet
+        # In simulation mode, use simulated_timestamp for eligibility check
+        # Coupons are assigned with simulated timestamps, so query against simulated time
         result = self.db.execute(
             text("""
             SELECT c.id, c.type, c.discount_details, c.category_or_brand, c.terms
@@ -351,9 +353,9 @@ class ShoppingActions:
             JOIN coupons c ON uc.coupon_id = c.id
             WHERE uc.user_id = :user_id
               AND (uc.status = 'active' OR uc.status IS NULL)
-              AND uc.eligible_until > :now
+              AND uc.eligible_until > :simulated_time
         """),
-            {"user_id": user_id, "now": simulated_timestamp},
+            {"user_id": user_id, "simulated_time": simulated_timestamp},
         )
 
         coupons = []
