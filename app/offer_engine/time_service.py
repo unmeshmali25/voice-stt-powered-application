@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class SimulatedTimeResult:
     """Result of time advance operation."""
+
     previous_date: date
     new_date: date
     real_hours_advanced: float
@@ -57,11 +58,13 @@ class TimeService:
         if not self._is_active or not self._calendar_start:
             return None
 
-        # Calculate simulated days from start
+        # Calculate simulated days from start (including fractional days)
         simulated_now = self.now()
-        days_elapsed = (simulated_now - self._simulation_start_time).days
+        exact_days = (
+            simulated_now - self._simulation_start_time
+        ).total_seconds() / 86400
 
-        return self._calendar_start + timedelta(days=days_elapsed)
+        return self._calendar_start + timedelta(days=exact_days)
 
     def start_simulation(self, calendar_start: date) -> None:
         """Begin simulation from specified calendar date."""
@@ -94,7 +97,9 @@ class TimeService:
         self._real_start_time -= timedelta(hours=hours)
 
         new_date = self.get_simulated_date()
-        simulated_days = (new_date - previous_date).days if previous_date and new_date else 0
+        simulated_days = (
+            (new_date - previous_date).days if previous_date and new_date else 0
+        )
 
         self.save_state()
         logger.info(f"Advanced {hours} hours: {previous_date} -> {new_date}")
@@ -107,15 +112,18 @@ class TimeService:
         )
 
     def get_expiration_time(self, from_time: datetime = None) -> datetime:
-        """Calculate offer expiration (2 weeks simulated from now)."""
+        """
+        Calculate offer expiration (2 weeks from now).
+
+        In simulation mode: 14 simulated days
+        In real mode: 14 real days
+        """
         if from_time is None:
             from_time = self.now()
 
-        if self.config.simulation_mode and self._is_active:
-            # In simulation: expiration is 2 simulated weeks
-            return from_time + timedelta(days=self.config.offer_expiration_days)
-        else:
-            return from_time + timedelta(days=self.config.offer_expiration_days)
+        # Always add days based on config (14 days)
+        # The time context (simulated vs real) is already in from_time
+        return from_time + timedelta(days=self.config.offer_expiration_days)
 
     def get_cycle_end_time(self, from_time: datetime = None) -> datetime:
         """Calculate cycle end (1 week simulated from now)."""
@@ -141,11 +149,13 @@ class TimeService:
             return
 
         try:
-            result = self.db.execute(text("""
+            result = self.db.execute(
+                text("""
                 SELECT simulation_start_time, real_start_time,
                        simulation_calendar_start, is_active, time_scale
                 FROM simulation_state WHERE id = 1
-            """)).fetchone()
+            """)
+            ).fetchone()
 
             if result and result.is_active:
                 self._simulation_start_time = result.simulation_start_time
@@ -153,7 +163,9 @@ class TimeService:
                 self._calendar_start = result.simulation_calendar_start
                 self._is_active = result.is_active
                 self.config.time_scale = float(result.time_scale)
-                logger.info(f"Loaded simulation state: active={self._is_active}, date={self._calendar_start}")
+                logger.info(
+                    f"Loaded simulation state: active={self._is_active}, date={self._calendar_start}"
+                )
         except Exception as e:
             logger.error(f"Failed to load simulation state: {e}")
 
@@ -163,7 +175,8 @@ class TimeService:
             return
 
         try:
-            self.db.execute(text("""
+            self.db.execute(
+                text("""
                 UPDATE simulation_state SET
                     simulation_start_time = :sim_start,
                     real_start_time = :real_start,
@@ -173,14 +186,16 @@ class TimeService:
                     time_scale = :time_scale,
                     updated_at = NOW()
                 WHERE id = 1
-            """), {
-                "sim_start": self._simulation_start_time,
-                "real_start": self._real_start_time,
-                "cal_start": self._calendar_start,
-                "current_date": self.get_simulated_date(),
-                "is_active": self._is_active,
-                "time_scale": self.config.time_scale,
-            })
+            """),
+                {
+                    "sim_start": self._simulation_start_time,
+                    "real_start": self._real_start_time,
+                    "cal_start": self._calendar_start,
+                    "current_date": self.get_simulated_date(),
+                    "is_active": self._is_active,
+                    "time_scale": self.config.time_scale,
+                },
+            )
             self.db.commit()
         except Exception as e:
             logger.error(f"Failed to save simulation state: {e}")
@@ -191,8 +206,12 @@ class TimeService:
         return {
             "is_active": self._is_active,
             "simulation_mode": self.config.simulation_mode,
-            "calendar_start": self._calendar_start.isoformat() if self._calendar_start else None,
-            "current_simulated_date": self.get_simulated_date().isoformat() if self.get_simulated_date() else None,
+            "calendar_start": self._calendar_start.isoformat()
+            if self._calendar_start
+            else None,
+            "current_simulated_date": self.get_simulated_date().isoformat()
+            if self.get_simulated_date()
+            else None,
             "real_elapsed_hours": round(self._get_real_hours_elapsed(), 2),
             "time_scale": self.config.time_scale,
         }

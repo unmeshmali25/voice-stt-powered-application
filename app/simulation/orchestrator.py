@@ -11,10 +11,13 @@ import asyncio
 import time
 import logging
 import os
+import sys
+import signal
 import traceback
 from dataclasses import dataclass, field
 from datetime import datetime, date, timedelta
 from typing import List, Dict, Any, Optional
+from io import StringIO
 
 from sqlalchemy import text, create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -24,6 +27,7 @@ from rich.table import Table
 from rich.panel import Panel
 from rich.layout import Layout
 from rich.text import Text
+from rich.logging import RichHandler
 
 from app.offer_engine import get_scheduler, get_config
 from app.simulation.agent.state import AgentState, create_initial_state
@@ -31,6 +35,35 @@ from app.simulation.agent.actions import set_actions, get_actions
 from app.simulation.agent.shopping_graph import get_shopping_graph
 
 logger = logging.getLogger(__name__)
+
+
+class LogBuffer(logging.Handler):
+    """Custom logging handler that stores recent log messages in memory."""
+
+    def __init__(self, max_lines: int = 50):
+        super().__init__()
+        self.max_lines = max_lines
+        self.buffer: List[str] = []
+
+    def emit(self, record):
+        """Add log record to buffer."""
+        try:
+            msg = self.format(record)
+            timestamp = datetime.fromtimestamp(record.created).strftime("%H:%M:%S")
+            formatted = f"[{timestamp}] [{record.levelname}] {msg}"
+            self.buffer.append(formatted)
+            if len(self.buffer) > self.max_lines:
+                self.buffer.pop(0)
+        except Exception:
+            self.handleError(record)
+
+    def get_lines(self) -> List[str]:
+        """Get all buffered lines."""
+        return self.buffer.copy()
+
+    def clear(self):
+        """Clear the buffer."""
+        self.buffer.clear()
 
 
 @dataclass
@@ -86,23 +119,35 @@ class SimulationOrchestrator:
         time_scale: float = 24.0,
         default_store_id: Optional[str] = None,
         process_all_agents: bool = True,
+        debug_mode: bool = False,
     ):
         """
         Initialize orchestrator.
 
         Args:
             db: SQLAlchemy Session
-            time_scale: Time compression ratio (24 = 1 real hour = 1 simulated day)
+            time_scale: Time compression ratio (24 = 1 real hour = 24 simulated hours)
+                        This overrides TIME_SCALE environment variable.
             default_store_id: Default store for shopping sessions
             process_all_agents: If True, scheduler processes all agents. If False, only processes filtered agents
+            debug_mode: Enable debug logging in dashboard
         """
         self.db = db
         self.time_scale = time_scale
         self.default_store_id = default_store_id or self._get_default_store()
         self.process_all_agents = process_all_agents
+        self.debug_mode = debug_mode
 
         # Initialize offer engine
         self.scheduler = get_scheduler(db)
+
+        # Sync time_scale if CLI parameter differs from env config
+        if self.time_scale != self.scheduler.config.time_scale:
+            old_scale = self.scheduler.config.time_scale
+            self.scheduler.config.time_scale = self.time_scale
+            logger.info(
+                f"Updated scheduler time_scale to {self.time_scale} (was {old_scale})"
+            )
 
         # Initialize actions
         set_actions(db)
@@ -125,6 +170,18 @@ class SimulationOrchestrator:
         # Error log file
         self._error_log_path = "simulation_errors.log"
         self._clear_error_log()
+
+        # Log buffer for debug mode
+        self.log_buffer = LogBuffer(max_lines=20)
+        if debug_mode:
+            self._setup_debug_logging()
+
+    def _setup_debug_logging(self):
+        """Setup debug logging to capture to buffer."""
+        self.log_buffer.setLevel(logging.DEBUG)
+        formatter = logging.Formatter("%(message)s")
+        self.log_buffer.setFormatter(formatter)
+        logging.getLogger().addHandler(self.log_buffer)
 
     def request_stop(self):
         """Request graceful stop of simulation."""
@@ -182,7 +239,9 @@ class SimulationOrchestrator:
             logger.info(f"Started simulation at {calendar_start}")
 
         # Calculate timing
-        # At time_scale=24: advance 1 simulated hour every (3600/24) = 150 real seconds
+        # Each cycle advances 1 simulated hour. Interval calculated to achieve time_scale cycles per real hour.
+        # At time_scale=96: 37.5 real seconds per cycle (3600/96)
+        # Results in 96 cycles per real hour, each advancing 1 simulated hour.
         advance_interval_seconds = 3600 / self.time_scale
 
         start_time = time.time()
@@ -192,13 +251,21 @@ class SimulationOrchestrator:
             with Live(
                 self._build_dashboard(), refresh_per_second=1, console=self.console
             ) as live:
-                await self._run_loop(
-                    agents, target_end_time, advance_interval_seconds, live
-                )
+                self._setup_signal_handlers()
+                try:
+                    await self._run_loop(
+                        agents, target_end_time, advance_interval_seconds, live
+                    )
+                finally:
+                    self._cleanup_signal_handlers()
         else:
-            await self._run_loop(
-                agents, target_end_time, advance_interval_seconds, None
-            )
+            self._setup_signal_handlers()
+            try:
+                await self._run_loop(
+                    agents, target_end_time, advance_interval_seconds, None
+                )
+            finally:
+                self._cleanup_signal_handlers()
 
         logger.info(f"Simulation complete. Stats: {self.stats.to_dict()}")
 
@@ -207,6 +274,30 @@ class SimulationOrchestrator:
             self.console.print(f"[dim]Check {self._error_log_path} for details[/dim]")
 
         return self.stats
+
+    def _setup_signal_handlers(self):
+        """Setup signal handlers for graceful shutdown."""
+        self._original_sigint = signal.getsignal(signal.SIGINT)
+        self._original_sigtstp = signal.getsignal(signal.SIGTSTP)
+
+        def handle_interrupt(signum, frame):
+            """Handle Ctrl+C and Ctrl+Z."""
+            if signum == signal.SIGINT:
+                self.console.print("\n[yellow]Stopping simulation...[/yellow]")
+                self.request_stop()
+            elif signum == signal.SIGTSTP:
+                self.console.print("\n[yellow]Pausing simulation (Ctrl+Z)[/yellow]")
+                self.request_stop()
+
+        signal.signal(signal.SIGINT, handle_interrupt)
+        signal.signal(signal.SIGTSTP, handle_interrupt)
+
+    def _cleanup_signal_handlers(self):
+        """Restore original signal handlers."""
+        if hasattr(self, "_original_sigint") and self._original_sigint:
+            signal.signal(signal.SIGINT, self._original_sigint)
+        if hasattr(self, "_original_sigtstp") and self._original_sigtstp:
+            signal.signal(signal.SIGTSTP, self._original_sigtstp)
 
     async def _run_loop(
         self,
@@ -238,10 +329,10 @@ class SimulationOrchestrator:
 
     async def _run_cycle(self, agents: List[Dict[str, Any]]):
         """Execute one simulation cycle."""
-        # 1. Advance simulation time by 1 hour
+        # 1. Advance simulation time by 1 simulated hour
         # Pass agent_ids to scheduler for filtering
         advance_result = self.scheduler.advance_simulation_time(
-            hours=1.0,
+            hours=1.0 / self.time_scale,  # Each cycle advances 1 simulated hour
             agent_ids=self.agent_ids,
             process_all_agents=self.process_all_agents,
         )
@@ -365,7 +456,13 @@ class SimulationOrchestrator:
 
     def _build_dashboard(self) -> Panel:
         """Build Rich dashboard panel."""
-        # Create stats table
+        if self.debug_mode:
+            return self._build_debug_dashboard()
+        else:
+            return self._build_simple_dashboard()
+
+    def _build_simple_dashboard(self) -> Panel:
+        """Build simple dashboard without debug logs."""
         table = Table(title="Simulation Statistics", show_header=True)
         table.add_column("Metric", style="cyan", width=20)
         table.add_column("Value", style="green", justify="right", width=15)
@@ -392,11 +489,69 @@ class SimulationOrchestrator:
         if self.stats.last_error:
             table.add_row("Last Error", self.stats.last_error, style="red")
 
-        # Build panel
         title = "[bold blue]VoiceOffers Simulation[/bold blue]"
         subtitle = f"Time Scale: {self.time_scale}x | LangSmith: {'ON' if os.getenv('LANGCHAIN_TRACING_V2') else 'OFF'}"
 
         return Panel(table, title=title, subtitle=subtitle, border_style="blue")
+
+    def _build_debug_dashboard(self) -> Panel:
+        """Build dashboard with debug logs."""
+        layout = Layout()
+        layout.split_column(
+            Layout(name="stats", ratio=3),
+            Layout(name="logs", ratio=2),
+        )
+
+        # Stats table
+        table = Table(title="Simulation Statistics", show_header=True, box=None)
+        table.add_column("Metric", style="cyan", width=20)
+        table.add_column("Value", style="green", justify="right", width=15)
+
+        elapsed = self.stats.elapsed_hours()
+        table.add_row("Elapsed Time", f"{elapsed:.2f}h")
+        table.add_row("Simulated Date", str(self.stats.simulated_date or "N/A"))
+        table.add_row("Cycles", str(self.stats.cycles_completed))
+        table.add_row("─" * 18, "─" * 13)
+        table.add_row("Agents Processed", str(self.stats.agents_processed))
+        table.add_row("Agents Shopped", str(self.stats.agents_shopped))
+        table.add_row("Sessions Created", str(self.stats.sessions_created))
+        table.add_row("─" * 18, "─" * 13)
+        table.add_row("Checkouts", str(self.stats.checkouts_completed))
+        table.add_row("Abandoned", str(self.stats.checkouts_abandoned))
+        table.add_row("Events Created", str(self.stats.events_created))
+        table.add_row("Offers Assigned", str(self.stats.offers_assigned))
+        table.add_row("─" * 18, "─" * 13)
+        table.add_row(
+            "Errors",
+            str(self.stats.errors),
+            style="red" if self.stats.errors > 0 else "green",
+        )
+        if self.stats.last_error:
+            table.add_row("Last Error", self.stats.last_error, style="red")
+
+        layout["stats"].update(
+            Panel(table, title="[bold]Statistics[/bold]", border_style="cyan")
+        )
+
+        # Log section
+        log_lines = self.log_buffer.get_lines()
+        if log_lines:
+            log_text = "\n".join(log_lines[-15:])  # Show last 15 lines
+        else:
+            log_text = "[dim]No debug logs yet...[/dim]"
+
+        log_panel = Panel(
+            Text(log_text, style="dim"),
+            title="[bold]Debug Logs[/bold]",
+            border_style="yellow",
+            padding=(0, 1),
+        )
+        layout["logs"].update(log_panel)
+
+        title = "[bold blue]VoiceOffers Simulation (Debug Mode)[/bold blue]"
+        subtitle = f"Time Scale: {self.time_scale}x | Press Ctrl+C to stop"
+
+        return Panel(layout, title=title, subtitle=subtitle, border_style="blue")
 
 
 async def run_simulation(
@@ -406,6 +561,8 @@ async def run_simulation(
     show_dashboard: bool = True,
     start_date: Optional[str] = None,
     process_all_agents: bool = False,
+    debug_mode: bool = False,
+    log_file: Optional[str] = None,
 ) -> SimulationStats:
     """
     Convenience function to run simulation.
@@ -417,6 +574,8 @@ async def run_simulation(
         show_dashboard: Show Rich dashboard
         start_date: Simulated start date as ISO string (YYYY-MM-DD)
         process_all_agents: If True, scheduler processes all agents. If False, only processes filtered agents
+        debug_mode: Enable debug logging in dashboard
+        log_file: Optional file to write logs to
 
     Returns:
         Final SimulationStats
@@ -424,6 +583,33 @@ async def run_simulation(
     from dotenv import load_dotenv
 
     load_dotenv()
+
+    # Setup logging
+    log_level = logging.DEBUG if debug_mode else logging.INFO
+    handlers = []
+
+    # Console handler with Rich
+    console_handler = RichHandler(
+        console=Console(stderr=True), show_time=True, show_level=True
+    )
+    console_handler.setLevel(log_level)
+    handlers.append(console_handler)
+
+    # File handler if specified
+    if log_file:
+        file_handler = logging.FileHandler(log_file, mode="w")
+        file_handler.setLevel(log_level)
+        file_handler.setFormatter(
+            logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+        )
+        handlers.append(file_handler)
+
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        handlers=handlers,
+        force=True,
+    )
 
     # Get database URL
     db_url = os.getenv("DATABASE_URL", "")
@@ -437,7 +623,10 @@ async def run_simulation(
 
     try:
         orchestrator = SimulationOrchestrator(
-            db=db, time_scale=time_scale, process_all_agents=process_all_agents
+            db=db,
+            time_scale=time_scale,
+            process_all_agents=process_all_agents,
+            debug_mode=debug_mode,
         )
         # Parse start_date string to date object
         parsed_start_date = None
@@ -458,12 +647,29 @@ if __name__ == "__main__":
     # CLI entry point
     import argparse
 
-    parser = argparse.ArgumentParser(description="Run VoiceOffers simulation")
-    parser.add_argument(
-        "--hours", type=float, default=6.0, help="Duration in real hours"
+    parser = argparse.ArgumentParser(
+        description="Run VoiceOffers simulation",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Run 1 hour simulation with debug logs visible
+  python -m app.simulation.orchestrator --hours 1 --debug
+
+  # Run with logs saved to file
+  python -m app.simulation.orchestrator --hours 6 --log-file sim.log
+
+  # Run without dashboard (logs to console)
+  python -m app.simulation.orchestrator --hours 6 --no-dashboard
+        """,
     )
     parser.add_argument(
-        "--time-scale", type=float, default=24.0, help="Time compression"
+        "--hours", type=float, default=6.0, help="Duration in real hours (default: 6.0)"
+    )
+    parser.add_argument(
+        "--time-scale",
+        type=float,
+        default=24.0,
+        help="Time compression (default: 24.0 = 1h real = 1 day simulated)",
     )
     parser.add_argument(
         "--start-date",
@@ -482,14 +688,19 @@ if __name__ == "__main__":
         action="store_true",
         help="Process all agents in scheduler (default: only process filtered agents)",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug mode - shows debug logs in dashboard",
+    )
+    parser.add_argument(
+        "--log-file",
+        type=str,
+        default=None,
+        help="Write all logs to specified file (e.g., simulation.log)",
+    )
 
     args = parser.parse_args()
-
-    # Setup logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
 
     # Run
     asyncio.run(
@@ -500,5 +711,7 @@ if __name__ == "__main__":
             show_dashboard=not args.no_dashboard,
             start_date=args.start_date,
             process_all_agents=args.process_all_agents,
+            debug_mode=args.debug,
+            log_file=args.log_file,
         )
     )

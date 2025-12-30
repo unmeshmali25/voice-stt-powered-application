@@ -6,6 +6,7 @@ Pool-based random offer assignment with separate frontstore and category/brand p
 
 import logging
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import List
 
 from sqlalchemy import text
@@ -53,7 +54,7 @@ class OfferAssigner:
         # 1. Expire ALL active offers for user
         expired_count = self.expiration_handler.expire_all_for_user(user_id)
 
-        # 2. Get recently assigned coupon IDs to exclude
+        # 2. Get recently assigned coupon IDs to exclude (exclude expired offers too)
         exclude_ids = self._get_recent_coupon_ids(user_id)
 
         # 3. Get frontstore offers
@@ -72,12 +73,15 @@ class OfferAssigner:
                 f"Pool exhaustion: category/brand has {len(category_brand_ids)}, need {self.config.category_brand_per_cycle}"
             )
 
-        # 5. Calculate expiration time
-        expiration = self.time_service.get_expiration_time()
+        # 5. Calculate expiration time and assigned time
+        assigned_at = self.time_service.now()
+        expiration = self.time_service.get_expiration_time(from_time=assigned_at)
 
         # 6. Insert new assignments
         all_coupon_ids = frontstore_ids + category_brand_ids
-        self._insert_assignments(user_id, all_coupon_ids, cycle_id, expiration)
+        self._insert_assignments(
+            user_id, all_coupon_ids, cycle_id, expiration, assigned_at
+        )
 
         logger.info(
             f"Assigned {len(all_coupon_ids)} offers to user {user_id} "
@@ -96,16 +100,19 @@ class OfferAssigner:
 
     def _get_recent_coupon_ids(self, user_id: str) -> List[str]:
         """Get coupon IDs assigned in recent cycles (to avoid repetition)."""
-        # Get coupons assigned in last 4 weeks
+        # Use simulation-aware time for the 28-day threshold
+        # This ensures the exclusion window respects simulation time, not real time
+        threshold = self.time_service.now() - timedelta(days=28)
+
         result = self.db.execute(
             text("""
             SELECT DISTINCT coupon_id
             FROM user_coupons
             WHERE user_id = :uid
               AND is_simulation = true
-              AND assigned_at > NOW() - INTERVAL '28 days'
+              AND assigned_at > :threshold
         """),
-            {"uid": user_id},
+            {"uid": user_id, "threshold": threshold},
         ).fetchall()
 
         return [str(row.coupon_id) for row in result]
@@ -171,24 +178,41 @@ class OfferAssigner:
         return [str(row.id) for row in result]
 
     def _insert_assignments(
-        self, user_id: str, coupon_ids: List[str], cycle_id: str, expiration
+        self,
+        user_id: str,
+        coupon_ids: List[str],
+        cycle_id: str,
+        expiration,
+        assigned_at,
     ) -> None:
         """Insert new coupon assignments."""
         for coupon_id in coupon_ids:
             try:
                 self.db.execute(text("SAVEPOINT assign_coupon"))
+
+                # Delete any existing simulation record for this user/coupon
+                # This allows re-assignment after the 28-day exclusion window
+                self.db.execute(
+                    text("""
+                    DELETE FROM user_coupons
+                    WHERE user_id = :uid AND coupon_id = :cid AND is_simulation = true
+                """),
+                    {"uid": user_id, "cid": coupon_id},
+                )
+
                 self.db.execute(
                     text("""
                     INSERT INTO user_coupons
                         (user_id, coupon_id, status, offer_cycle_id, is_simulation, eligible_until, assigned_at)
                     VALUES
-                        (:uid, :cid, 'active', :cycle, true, :exp, NOW())
+                        (:uid, :cid, 'active', :cycle, true, :exp, :assigned_at)
                 """),
                     {
                         "uid": user_id,
                         "cid": coupon_id,
                         "cycle": cycle_id,
                         "exp": expiration,
+                        "assigned_at": assigned_at,
                     },
                 )
                 self.db.execute(text("RELEASE SAVEPOINT assign_coupon"))
