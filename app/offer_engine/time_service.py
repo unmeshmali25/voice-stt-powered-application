@@ -50,6 +50,12 @@ class TimeService:
         # Scale to simulated hours
         simulated_hours = real_hours * self.config.time_scale
 
+        logger.debug(
+            f"time_service.now() - real_elapsed: {real_hours:.3f}h, "
+            f"time_scale: {self.config.time_scale}, "
+            f"simulated_hours: {simulated_hours:.3f}h"
+        )
+
         # Return simulated time
         return self._simulation_start_time + timedelta(hours=simulated_hours)
 
@@ -68,12 +74,18 @@ class TimeService:
 
     def start_simulation(self, calendar_start: date) -> None:
         """Begin simulation from specified calendar date."""
-        self._simulation_start_time = datetime.utcnow()
+        logger.info(f"START_SIMULATION called with calendar_start={calendar_start}")
+        self._simulation_start_time = datetime.combine(
+            calendar_start, datetime.min.time()
+        )
         self._real_start_time = datetime.utcnow()
         self._calendar_start = calendar_start
         self._is_active = True
+        logger.info(f"Set _is_active=True, _calendar_start={calendar_start}")
         self.save_state()
-        logger.info(f"Simulation started at calendar date: {calendar_start}")
+        logger.info(
+            f"Simulation started. is_simulation_active()={self.is_simulation_active()}"
+        )
 
     def stop_simulation(self) -> dict:
         """End simulation, preserve state."""
@@ -102,7 +114,11 @@ class TimeService:
         )
 
         self.save_state()
-        logger.info(f"Advanced {hours} hours: {previous_date} -> {new_date}")
+        logger.info(
+            f"advance_time({hours}h) - time_scale: {self.config.time_scale}, "
+            f"date: {previous_date} -> {new_date}, "
+            f"simulated_days: {simulated_days}"
+        )
 
         return SimulatedTimeResult(
             previous_date=previous_date,

@@ -29,7 +29,7 @@ from rich.layout import Layout
 from rich.text import Text
 from rich.logging import RichHandler
 
-from app.offer_engine import get_scheduler, get_config
+from app.offer_engine import get_scheduler, get_config, reset_singletons
 from app.simulation.agent.state import AgentState, create_initial_state
 from app.simulation.agent.actions import set_actions, get_actions
 from app.simulation.agent.shopping_graph import get_shopping_graph
@@ -71,7 +71,7 @@ class SimulationStats:
     """Tracks simulation statistics."""
 
     start_time: float = field(default_factory=time.time)
-    simulated_date: Optional[date] = None
+    simulated_datetime: Optional[datetime] = None
     cycles_completed: int = 0
     agents_processed: int = 0
     agents_shopped: int = 0
@@ -89,7 +89,9 @@ class SimulationStats:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "elapsed_hours": round(self.elapsed_hours(), 2),
-            "simulated_date": str(self.simulated_date) if self.simulated_date else None,
+            "simulated_datetime": str(self.simulated_datetime)
+            if self.simulated_datetime
+            else None,
             "cycles_completed": self.cycles_completed,
             "agents_processed": self.agents_processed,
             "agents_shopped": self.agents_shopped,
@@ -138,6 +140,11 @@ class SimulationOrchestrator:
         self.process_all_agents = process_all_agents
         self.debug_mode = debug_mode
 
+        # Reset offer engine singletons for fresh initialization
+        logger.info("Resetting offer engine singletons...")
+        reset_singletons()
+        logger.info("Creating new scheduler...")
+
         # Initialize offer engine
         self.scheduler = get_scheduler(db)
 
@@ -148,6 +155,13 @@ class SimulationOrchestrator:
             logger.info(
                 f"Updated scheduler time_scale to {self.time_scale} (was {old_scale})"
             )
+
+        # Log final time_scale values for debugging
+        logger.info(
+            f"Orchestrator time_scale: {self.time_scale}, "
+            f"scheduler.config.time_scale: {self.scheduler.config.time_scale}, "
+            f"time_service.config.time_scale: {self.scheduler.time_service.config.time_scale}"
+        )
 
         # Initialize actions
         set_actions(db)
@@ -233,10 +247,25 @@ class SimulationOrchestrator:
             return self.stats
 
         # Ensure simulation is started
-        if not self.scheduler.time_service.is_simulation_active():
+        is_active = self.scheduler.time_service.is_simulation_active()
+        logger.info(f"Simulation active check: {is_active}")
+        logger.info(f"  simulation_mode: {self.scheduler.config.simulation_mode}")
+        logger.info(
+            f"  time_service._is_active: {self.scheduler.time_service._is_active}"
+        )
+        logger.info(f"  requested start_date: {start_date}")
+
+        if not is_active:
             calendar_start = start_date or date(2024, 1, 1)
+            logger.info(f"Starting simulation at {calendar_start}")
             self.scheduler.time_service.start_simulation(calendar_start=calendar_start)
-            logger.info(f"Started simulation at {calendar_start}")
+            logger.info(
+                f"Simulation started. Active: {self.scheduler.time_service.is_simulation_active()}"
+            )
+        else:
+            logger.warning(
+                "Simulation already active, skipping start_simulation() call"
+            )
 
         # Calculate timing
         # Each cycle advances 1 simulated hour. Interval calculated to achieve time_scale cycles per real hour.
@@ -329,23 +358,27 @@ class SimulationOrchestrator:
 
     async def _run_cycle(self, agents: List[Dict[str, Any]]):
         """Execute one simulation cycle."""
-        # 1. Advance simulation time by 1 simulated hour
-        # Pass agent_ids to scheduler for filtering
+        # 1. Process offers/agents for this cycle
+        # Note: Wall clock time + time_scale multiplication in now() handles time advancement.
+        # Each cycle sleeps for 3600/time_scale seconds, which naturally advances
+        # simulated time by 1 hour when now() multiplies elapsed time by time_scale.
+        # We pass hours=0 to avoid double-counting (advance_time + wall clock).
         advance_result = self.scheduler.advance_simulation_time(
-            hours=1.0 / self.time_scale,  # Each cycle advances 1 simulated hour
+            hours=0,  # No manual time advancement - wall clock handles it
             agent_ids=self.agent_ids,
             process_all_agents=self.process_all_agents,
         )
         self.stats.cycles_completed += 1
         self.stats.offers_assigned += advance_result.offers_assigned
 
-        # 2. Get current simulated date
-        sim_date = self.scheduler.time_service.get_simulated_date()
-        self.stats.simulated_date = sim_date
+        # 2. Get current simulated datetime
+        sim_datetime = self.scheduler.time_service.now()
+        sim_date = sim_datetime.date()
+        self.stats.simulated_datetime = sim_datetime
 
-        # Handle case where sim_date might be None
-        if sim_date is None:
-            logger.warning("No simulated date available, skipping agent processing")
+        # Handle case where sim_datetime might be None
+        if sim_datetime is None:
+            logger.warning("No simulated datetime available, skipping agent processing")
             return
 
         # 3. Process each agent
@@ -465,11 +498,16 @@ class SimulationOrchestrator:
         """Build simple dashboard without debug logs."""
         table = Table(title="Simulation Statistics", show_header=True)
         table.add_column("Metric", style="cyan", width=20)
-        table.add_column("Value", style="green", justify="right", width=15)
+        table.add_column("Value", style="green", justify="right", width=20)
 
         elapsed = self.stats.elapsed_hours()
         table.add_row("Elapsed Time", f"{elapsed:.2f}h")
-        table.add_row("Simulated Date", str(self.stats.simulated_date or "N/A"))
+        sim_time_str = (
+            self.stats.simulated_datetime.strftime("%Y-%m-%d %H:%M:%S")
+            if self.stats.simulated_datetime
+            else "N/A"
+        )
+        table.add_row("Simulated Time", sim_time_str)
         table.add_row("Cycles", str(self.stats.cycles_completed))
         table.add_row("─" * 18, "─" * 13)
         table.add_row("Agents Processed", str(self.stats.agents_processed))
@@ -505,11 +543,20 @@ class SimulationOrchestrator:
         # Stats table
         table = Table(title="Simulation Statistics", show_header=True, box=None)
         table.add_column("Metric", style="cyan", width=20)
-        table.add_column("Value", style="green", justify="right", width=15)
+        table.add_column("Value", style="green", justify="right", width=20)
 
         elapsed = self.stats.elapsed_hours()
         table.add_row("Elapsed Time", f"{elapsed:.2f}h")
-        table.add_row("Simulated Date", str(self.stats.simulated_date or "N/A"))
+        logger.debug(
+            f"Building dashboard - stats.simulated_datetime: {self.stats.simulated_datetime}"
+        )
+        sim_time_str = (
+            self.stats.simulated_datetime.strftime("%Y-%m-%d %H:%M:%S")
+            if self.stats.simulated_datetime
+            else "N/A"
+        )
+        logger.debug(f"Building dashboard - sim_time_str: {sim_time_str}")
+        table.add_row("Simulated Time", sim_time_str)
         table.add_row("Cycles", str(self.stats.cycles_completed))
         table.add_row("─" * 18, "─" * 13)
         table.add_row("Agents Processed", str(self.stats.agents_processed))
