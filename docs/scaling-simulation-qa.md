@@ -259,65 +259,61 @@ if request.headers.get("X-API-Key") == os.getenv("SIMULATION_API_KEY"):
 ---
 
 ### Q2.3: How do we handle JWT token generation for 372 agents?
-#Unmesh: Wait. How did we do that for the orchestrator simulation test of 10 agents ? I thought we bypassed auth with dev tokens. Can you please confirm? 
-**Answer:** Pre-generate tokens during initialization and cache them.
 
-**Implementation:**
+**Answer:** No JWT generation needed - use existing SIMULATION_MODE bypass with dev tokens.
+
+**Implementation (Already in main.py):**
 
 ```python
-class TokenCache:
-    def __init__(self, db: Session):
-        self.db = db
-        self.cache: Dict[str, str] = {}  # user_id -> JWT
-    
-    def get_or_create_token(self, user_id: str) -> str:
-        """Get cached JWT or create new one."""
-        if user_id not in self.cache:
-            # Get user from database
-            user = self.db.execute(
-                text("SELECT * FROM users WHERE id = :user_id"),
-                {"user_id": user_id}
-            ).fetchone()
-            
-            # Generate JWT with simulation scope
-            self.cache[user_id] = self._generate_jwt(user)
-        
-        return self.cache[user_id]
-    
-    def _generate_jwt(self, user: dict) -> str:
-        """Generate JWT with simulation scope."""
-        payload = {
-            "sub": user["id"],
-            "email": user["email"],
-            "scopes": ["simulation"],  # Simulation scope
-            "exp": datetime.utcnow() + timedelta(hours=24),  # 24h expiry
+# From app/main.py (line 284-298)
+# SIMULATION MODE BYPASS (B-8)
+if os.getenv("SIMULATION_MODE", "false").lower() == "true":
+    # Accept "Bearer dev:<agent_id>" format instead of JWT
+    if authorization.startswith("Bearer dev:"):
+        agent_id = authorization.replace("Bearer dev:", "").strip()
+        return {
+            "user_id": f"{agent_id}@simulation.local",
+            "email": f"{agent_id}@simulation.local",
+            "is_simulation": True,
         }
-        return jwt.encode(payload, SUPABASE_JWT_SECRET, algorithm="HS256")
+```
+
+**Confirmation from 10-agent test:** The orchestrator test with 10 agents used this exact bypass mechanism - no JWT generation required.
+
+**Usage in orchestrator:**
+```bash
+# Set SIMULATION_MODE=true and use dev tokens
+export SIMULATION_MODE=true
+python -m app.simulation.orchestrator --hours 6
+
+# The orchestrator will use Authorization: "Bearer dev:agent_001"
+# which is automatically accepted by main.py verify_token()
 ```
 
 **Options Considered:**
 
-**Option 1: Pre-generate all tokens at start (recommended)**
-- ✅ No blocking during simulation
-- ✅ Fast lookups (O(1))
-- ✅ Can validate all tokens before simulation starts
-- ⚠️ 372 tokens in memory (~50KB)
-- ⚠️ Tokens expire after 24h (need refresh)
+**Option 1: Use SIMULATION_MODE bypass (already implemented - recommended)**
+- ✅ Already implemented in main.py (line 284-298)
+- ✅ No JWT generation overhead
+- ✅ Simple Authorization header format: "Bearer dev:agent_001"
+- ✅ Tested with 10-agent simulation
+- ⚠️ Requires SIMULATION_MODE=true environment variable
+- ⚠️ Dev token format (not production-ready)
 
-**Option 2: Generate tokens on demand**
-- ✅ No upfront work
-- ✅ Tokens always fresh
-- ❌ Blocking per agent (adds latency)
-- ❌ Harder to validate before simulation
+**Option 2: Pre-generate JWTs (alternative)**
+- ✅ Production-ready tokens
+- ✅ Can validate before simulation
+- ❌ Additional complexity (JWT generation code)
+- ❌ Token refresh logic needed
+- ❌ Not necessary - bypass already works
 
-**Option 3: Use shared simulation token**
-- ✅ Single token for all agents
-- ✅ Minimal memory usage
-- ❌ Security risk (no audit trail)
-- ❌ Can't track individual agents
+**Option 3: Shared simulation token (not recommended)**
+- ✅ Simplest approach
+- ❌ Security risk (no individual tracking)
+- ❌ Not audit-friendly
 - ❌ Violates JWT best practices
 
-**RECOMMENDATION:** Option 1 (Pre-generate all tokens). Add token refresh logic to regenerate tokens before expiry. Use `Dict` for O(1) lookups. Total memory usage is negligible (~50KB for 372 tokens).
+**RECOMMENDATION:** Option 1 (Use existing SIMULATION_MODE bypass). The implementation already exists and is tested. Set `SIMULATION_MODE=true` environment variable before running simulation. No code changes needed.
 
 ---
 
@@ -833,60 +829,49 @@ Total lost time: 0.07% × 6 hours = 15 seconds
 
 ### Q6.1: How do we handle LLM API rate limits during persona generation?
 
-**Answer:** Implement adaptive rate limiting with automatic backoff.
+**Answer:** N/A - Personas already generated and seeded in database.
 
-**Problem:**
-- **OpenRouter free tier limits:** Unknown (typically 10-100 requests/minute)
-- **Persona generation:** 372 calls × 2s = 744 seconds (12.4 minutes) at 1 concurrent
-- **With 50 concurrent:** 372 × 2s / 50 = ~15 seconds (if API allows)
+**Status:** 372 agent personas have been pre-generated and migrated to the `agents` table via `seed_simulation_agents.py`.
 
-**Analysis:**
+**Implementation (Already Done):**
+```bash
+# From scripts/seed_simulation_agents.py
+# Personas loaded from Excel/JSON and seeded into:
+# - users table (user_id, email, full_name)
+# - agents table (all 28 persona columns including demographics, behaviors, preferences)
 
-**Current Behavior:**
-```python
-max_concurrent_requests = 1  # Sequential
-max_retries = 5
-retry_delay = 2.0  # Exponential backoff
+# Usage:
+python scripts/seed_simulation_agents.py data/personas/personas.xlsx
 ```
 
-**Issues:**
-- ❌ Too conservative (1 concurrent when API could handle more)
-- ❌ Fixed rate doesn't adapt to API capacity
-- ❌ 12.4 minutes to generate 372 personas (could be faster)
+**Data Location:**
+- **Table:** `agents` in database
+- **Columns:** All persona attributes (age, income, preferences, behaviors, etc.)
+- **Access:** `app/simulation/orchestrator.py` loads via `_load_agents()` (line 446-483)
+- **No LLM calls:** Orchestrator directly queries database, no API calls needed
 
-**Desired Behavior:**
-- ✅ Start conservatively (10 req/s)
-- ✅ Gradually increase if no rate limits
-- ✅ Immediately reduce on 429 (Too Many Requests)
-- ✅ Finish in ~1-2 minutes instead of 12 minutes
-
-**Implementation:**
-
-See **Solution 1: Adaptive Rate Limiting** in scaling-simulation.md (Section 6).
+**Implications:**
+- ✅ No LLM rate limiting needed
+- ✅ Zero latency for persona generation (already done)
+- ✅ No API costs
+- ✅ Instant agent loading from database
+- ❌ Need to regenerate personas if schema changes
 
 **Options Considered:**
 
-**Option 1: Adaptive rate limiting (recommended)**
-- ✅ Automatically finds optimal rate
-- ✅ Responds to rate limits immediately
-- ✅ Balances speed and stability
-- ⚠️ May take time to ramp up (10-20 requests)
-- ⚠️ More complex implementation
+**N/A - Personas already pre-generated.**
 
-**Option 2: Fixed rate with conservative limit (10 req/s)**
-- ✅ Simple to implement
-- ✅ Won't hit rate limits
-- ❌ Slower (37 seconds vs 15 seconds)
-- ❌ Doesn't adapt to API capacity
+**Current State:**
+- ✅ 372 personas already in `agents` table
+- ✅ Seeded via `seed_simulation_agents.py`
+- ✅ No LLM calls needed during simulation
+- ✅ Zero rate limiting concerns
 
-**Option 3: Retry on all errors (aggressive)**
-- ✅ Maximizes speed
-- ❌ Will definitely hit rate limits
-- ❌ May get IP banned
-- ❌ High failure rate
-
-**RECOMMENDATION:** Option 1 (Adaptive rate limiting). Start at 10 req/s, increase by 10% on success, decrease by 50% on 429. This balances speed and stability. Monitor for API key quota exhaustion and adjust if needed.
-#Unmesh: I have already generated and migrated personas for 372 agents. No need to run LLM API calls to generate additional personas. Just use the ones already in the database.
+**Future Consideration:**
+If schema changes require persona regeneration, consider:
+- Reuse existing personas if possible (backwards compatible)
+- Batch regeneration with adaptive rate limiting if needed
+- Generate offline and bulk-import to minimize runtime impact
 ---
 
 ### Q6.2: Should we cache LLM responses?
@@ -1286,110 +1271,116 @@ Set error threshold (e.g., stop if > 20% agents fail).
 
 ### Q9.1: How do we test at scale before running 372 agents?
 
-**Answer:** Progressive load testing with monitoring at each stage.
+**Answer:** Progressive load testing - start with medium scale (50 agents), validate, then scale up.
 
-**Testing Strategy:**
+**Testing Strategy (Simplified):**
 
-**Phase 1: Smoke Test (2 agents)**
-- **Duration:** 5 minutes
-- **Goal:** Verify basic functionality
-- **Success criteria:** All agents complete, no errors
-
-**Phase 2: Small Scale (10 agents)**
-- **Duration:** 10 minutes
-- **Goal:** Verify concurrency and monitoring
-- **Success criteria:** Dashboard updates, checkpoint created, < 1% errors
-
-**Phase 3: Medium Scale (50 agents)**
+**Phase 1: Medium Scale (50 agents) - START HERE**
 - **Duration:** 20 minutes
-- **Goal:** Verify DB pool and API rate limiting
-- **Success criteria:** < 50 DB connections, < 1% API errors, < 5% agent errors
+- **Goal:** Verify DB pool, basic concurrency, and monitoring
+- **Success criteria:** < 50 DB connections, < 1% errors, dashboard updates
+- **Command:**
+```bash
+python -m app.simulation.orchestrator \
+    --hours 0.5 \
+    --time-scale 24 \
+    --process-all-agents \
+    --log-file test_50_agents.log
+```
 
-**Phase 4: Large Scale (100 agents)**
+**Phase 2: Large Scale (100 agents)**
 - **Duration:** 40 minutes
-- **Goal:** Verify resource usage and checkpointing
-- **Success criteria:** < 8GB memory, < 70% CPU, checkpoints every 5 min
+- **Goal:** Verify resource usage, adaptive concurrency, checkpointing
+- **Success criteria:** < 8GB memory, < 70% CPU, checkpoints created
+- **Command:**
+```bash
+python -m app.simulation.orchestrator \
+    --hours 1 \
+    --time-scale 24 \
+    --process-all-agents \
+    --log-file test_100_agents.log
+```
 
-**Phase 5: Stress Test (250 agents)**
+**Phase 3: Extended Scale (150-250 agents)**
 - **Duration:** 60 minutes
-- **Goal:** Identify breaking points
-- **Success criteria:** Complete run, monitor bottlenecks, identify limits
+- **Goal:** Identify bottlenecks and limits
+- **Success criteria:** Complete run, monitor connection pool exhaustion
+- **Command:**
+```bash
+python -m app.simulation.orchestrator \
+    --hours 2 \
+    --time-scale 24 \
+    --process-all-agents \
+    --log-file test_250_agents.log
+```
 
-**Phase 6: Full Scale (372 agents)**
+**Phase 4: Full Scale (372 agents)**
 - **Duration:** 6 hours
 - **Goal:** Production run
 - **Success criteria:** All success criteria from scaling-simulation.md
+- **Command:**
+```bash
+SIMULATION_MODE=true python -m app.simulation.orchestrator \
+    --hours 6 \
+    --time-scale 24 \
+    --process-all-agents \
+    --log-file full_372_agents.log
+```
+
+**Notes:**
+- 2-agent and 10-agent smoke tests are **NOT needed** - already validated in previous runs
+- Start directly at 50 agents (medium scale)
+- Each phase validates specific concerns before moving to next
 
 **Commands:**
 
 ```bash
-# Phase 1: Smoke test
-python -m app.simulation.orchestrator \
-    --hours 0.1 \
-    --max-concurrent 2 \
-    --debug
-
-# Phase 2: Small scale
-python -m app.simulation.orchestrator \
-    --hours 0.2 \
-    --max-concurrent 10 \
-    --checkpoint-interval 60 \
-    --log-file test_10_agents.log
-
-# Phase 3: Medium scale
-python -m app.simulation.orchestrator \
+# Phase 1: Medium scale (50 agents)
+SIMULATION_MODE=true python -m app.simulation.orchestrator \
     --hours 0.5 \
-    --max-concurrent 50 \
-    --checkpoint-interval 300 \
+    --time-scale 24 \
+    --process-all-agents \
     --log-file test_50_agents.log
 
-# Phase 4: Large scale
-python -m app.simulation.orchestrator \
+# Phase 2: Large scale (100 agents)
+SIMULATION_MODE=true python -m app.simulation.orchestrator \
     --hours 1 \
-    --max-concurrent 80 \
-    --checkpoint-interval 300 \
+    --time-scale 24 \
+    --process-all-agents \
     --log-file test_100_agents.log
 
-# Phase 5: Stress test
-python -m app.simulation.orchestrator \
+# Phase 3: Extended scale (250 agents)
+SIMULATION_MODE=true python -m app.simulation.orchestrator \
     --hours 2 \
-    --max-concurrent 100 \
-    --checkpoint-interval 300 \
-    --adaptive \
+    --time-scale 24 \
+    --process-all-agents \
     --log-file test_250_agents.log
 
-# Phase 6: Full scale
-python -m app.simulation.orchestrator \
+# Phase 4: Full scale (372 agents)
+SIMULATION_MODE=true python -m app.simulation.orchestrator \
     --hours 6 \
-    --max-concurrent 50 \
-    --checkpoint-interval 300 \
-    --adaptive \
-    --debug \
+    --time-scale 24 \
+    --process-all-agents \
     --log-file full_372_agents.log
 ```
 
 **Options Considered:**
 
-**Option 1: Progressive testing (recommended)**
-- ✅ Gradual verification
-- ✅ Identify issues early (at 10 agents, not 372)
-- ✅ Easier debugging (smaller scope)
-- ⚠️ Time-consuming (6 phases × ~2 hours = 12 hours)
+**Option 1: Progressive testing from 50 agents (recommended)**
+- ✅ Start with medium scale (50 agents) - practical test
+- ✅ Validate core functionality before scaling
+- ✅ Identify issues early (at 50 agents, not 372)
+- ✅ Easier debugging
+- ⚠️ Time-consuming (4 phases × ~2 hours = 8 hours)
+- ✅ Skip smoke tests (2/10 agents) - already validated
 
 **Option 2: Direct full run (risky)**
-- ✅ Saves time (no intermediate tests)
-- ❌ Issues harder to debug (372 agents vs 10)
+- ✅ Saves time
+- ❌ Issues harder to debug (372 agents vs 50)
 - ❌ May fail late in run (wastes time)
 - ❌ Risk of catastrophic failure
 
-**Option 3: Parallel testing (aggressive)**
-- ✅ Fastest (run all phases in parallel on different machines)
-- ✅ Tests scaling under concurrent load
-- ❌ Requires multiple machines
-- ❌ Complex coordination
-
-**RECOMMENDATION:** Option 1 (Progressive testing). While time-consuming, it provides confidence and catches issues early. Each phase validates specific concerns (smoke test → functionality, 10 agents → monitoring, 50 agents → DB/API, 100 agents → resources, 250 agents → stress testing).
-#Unmesh: Let's start with medium scale of 50 agents. Once everything works correctly - we'll move on to 100 agents and then more. 
+**RECOMMENDATION:** Option 1 (Start at 50, scale up). 50-agent test validates core functionality. Once successful, progress to 100, then 250, then full 372. This provides confidence with manageable debugging scope. 
 ---
 
 ### Q9.2: How do we validate simulation results?
@@ -1674,11 +1665,11 @@ if stats["total"] > 55:
 | **DB Pool Size** | 50 base + 10 overflow (60 total) | HIGH |
 | **Concurrency** | 50 with adaptive adjustment (20-100 range) | HIGH |
 | **Checkpoint Interval** | 5 minutes | HIGH |
-| **Rate Limiting** | Bypass for simulation mode (header + JWT) | HIGH |
-| **LLM Rate Limiter** | Adaptive (10-50 req/s) | MEDIUM |
+| **Rate Limiting** | Bypass via SIMULATION_MODE (dev tokens) | HIGH |
+| **LLM Rate Limiter** | N/A (personas pre-generated in DB) | LOW |
 | **Monitoring** | Enhanced Rich dashboard + CSV export | HIGH |
 | **Error Handling** | Classify (transient/permanent) + exponential backoff | HIGH |
-| **Testing** | Progressive (2 → 10 → 50 → 100 → 250 → 372) | HIGH |
+| **Testing** | Progressive (50 → 100 → 250 → 372) | HIGH |
 | **Deployment** | Local machine (M1 Pro) | MEDIUM |
 | **Validation** | Automated (layers 1-3) + manual (layer 4) | MEDIUM |
 

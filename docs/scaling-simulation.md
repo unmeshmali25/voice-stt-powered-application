@@ -198,10 +198,12 @@ class EventBatcher:
 - Risk of event loss if process crashes mid-batch
 - Need to flush on agent completion
 
-### **RECOMMENDATION: Solution 1 (Increased Pool) + Solution 3 (Batch Events)**
-- Set pool_size=50, max_overflow=10 (60 total connections)
-- Batch shopping_session_events (10-20 events per batch)
-- Flush events on agent completion or every 5 seconds
+### **RECOMMENDATION: Solution 1 (Configure Connection Pool)**
+- Update `orchestrator.py` to create engine with proper pool settings
+- Set `pool_size=50`, `max_overflow=10` (60 total connections)
+- Add `pool_use_lifo=True` for warm connection reuse
+- Add `pool_pre_ping=True` for health checks
+- Add `pool_timeout=30` to queue requests when pool full
 
 ---
 
@@ -238,44 +240,47 @@ limiter.limit("60/minute")(product_endpoints)
 - **372 agents:** 372 × 6 calls/agent = 2,232 calls/min (20x over limit)
 - **Peak rate:** 372 agents × 3 calls/checkout × 10 min = 11,160 calls in 10 min
 
-### Solution 1: Disable Rate Limiting for Simulation (RECOMMENDED)
+### Solution 1: Use Existing SIMULATION_MODE Bypass (RECOMMENDED)
 
-**Implementation:**
+**Implementation (Already in main.py lines 284-298):**
+
 ```python
-# In main.py
-from functools import wraps
-
-def exempt_simulation_rate_limit(f):
-    """Decorator to bypass rate limit for simulation."""
-    @wraps(f)
-    async def wrapper(*args, **kwargs):
-        # Check X-Simulation-Mode header
-        request = kwargs.get('request', args[0] if args else None)
-        if request and request.headers.get("X-Simulation-Mode") == "true":
-            return await f(*args, **kwargs)
-        
-        # Apply rate limit normally
-        return limiter.limit("30/minute")(f)(*args, **kwargs)
-    return wrapper
-
-# Apply to endpoints
-@router.post("/api/cart/items")
-@exempt_simulation_rate_limit
-async def add_to_cart(...):
-    ...
-
-# In orchestrator.py
-import httpx
-
-async def make_api_call(endpoint: str, payload: dict, user_id: str):
-    headers = {
-        "Authorization": f"Bearer {get_jwt_for_user(user_id)}",
-        "X-Simulation-Mode": "true",  # Bypass rate limit
-        "Content-Type": "application/json"
-    }
-    async with httpx.AsyncClient() as client:
-        return await client.post(endpoint, json=payload, headers=headers)
+# From app/main.py
+# SIMULATION MODE BYPASS (B-8)
+if os.getenv("SIMULATION_MODE", "false").lower() == "true":
+    # Accept "Bearer dev:<agent_id>" format instead of JWT
+    if authorization.startswith("Bearer dev:"):
+        agent_id = authorization.replace("Bearer dev:", "").strip()
+        return {
+            "user_id": f"{agent_id}@simulation.local",
+            "email": f"{agent_id}@simulation.local",
+            "is_simulation": True,
+        }
 ```
+
+**Usage in orchestrator:**
+```bash
+# Set SIMULATION_MODE=true before running
+export SIMULATION_MODE=true
+
+# The orchestrator automatically uses Authorization: "Bearer dev:agent_001"
+# which is accepted by main.py verify_token() without JWT generation
+SIMULATION_MODE=true python -m app.simulation.orchestrator --hours 6
+```
+
+**Pros:**
+- ✅ Already implemented and tested (10-agent simulation)
+- ✅ No JWT generation overhead
+- ✅ Simple Authorization format
+- ✅ No code changes needed
+- ✅ Zero API latency for token generation
+
+**Cons:**
+- ⚠️ Requires SIMULATION_MODE=true environment variable
+- ⚠️ Dev token format (not production-ready)
+- ⚠️ No audit trail for individual agents
+
+**RECOMMENDATION:** Use existing SIMULATION_MODE bypass. Set environment variable before running simulation. No implementation needed.
 
 **Benefits:**
 - Simple to implement
@@ -382,22 +387,26 @@ async def _run_cycle(self, agents: List[Dict[str, Any]]):
 ```
 
 **Analysis:**
-- Sequential execution = 372 × ~2s per agent = 744 seconds (12.4 minutes) per cycle
+- **Current:** Sequential execution = 372 × ~2s per agent = 744 seconds (12.4 minutes) per cycle
+- **Target:** Concurrent execution = 372 × ~2s / 50 = ~15 seconds per cycle
+- **Improvement:** 50x faster (12.4 minutes → 15 seconds per cycle)
 - Each agent runs LangGraph shopping_graph (synchronous invoke)
-- Only 1 CPU core utilized at a time (others idle)
-- M1 Pro: 8 cores (4 performance, 4 efficiency) mostly idle
+- **Current:** Only 1 CPU core utilized at a time (others idle)
+- **Target:** Utilize all 8 cores via asyncio
+- M1 Pro: 8 cores (4 performance, 4 efficiency) mostly idle currently
 
 **Memory Footprint:**
 - **Per agent state:** ~50KB (AgentState + products_data + cart_items)
 - **Per agent graph:** ~100KB (LangGraph compiled graph)
 - **Total for 372 agents:** (50KB + 100KB) × 372 = ~56MB (negligible)
-- **Database connections:** 60 × 1MB = ~60MB
+- **With 50 concurrent agents:** 50 × 150KB = 7.5MB in flight
+- **Database connections:** 60 × 1MB = ~60MB (with proper pooling)
 - **Python overhead:** ~500MB (runtime, objects, GC)
 - **Total estimated memory:** ~600-800MB (well within 16GB)
 
-### Solution 1: asyncio.gather() with Semaphore (RECOMMENDED)
+### Solution 1: asyncio.gather() with Semaphore (RECOMMENDED - TO BE IMPLEMENTED)
 
-Execute agents concurrently with controlled concurrency:
+**Replace sequential _run_cycle() with concurrent version:**
 
 ```python
 async def _run_cycle_concurrent(self, agents: List[Dict[str, Any]], max_concurrent: int = 50):
@@ -425,14 +434,39 @@ async def _run_cycle_concurrent(self, agents: List[Dict[str, Any]], max_concurre
         self.stats.agents_processed += 1
         
         if isinstance(result, Exception):
-            logger.error(f"Agent {agent['agent_id']} failed: {result}")
+            logger.error(f"Agent {agent_id} failed: {result}")
             self.stats.errors += 1
         elif result.get("should_shop"):
             self.stats.agents_shopped += 1
-            ...
+            self.stats.sessions_created += 1
+            self.stats.events_created += result.get("events_created", 0)
+            
+            if result.get("checkout_decision") == "complete":
+                self.stats.checkouts_completed += 1
+            elif result.get("checkout_decision") == "abandon":
+                self.stats.checkouts_abandoned += 1
     
     # Commit all changes at once
     self.db.commit()
+```
+
+**Integration with CLI:**
+```python
+# In orchestrator.py __main__ (line 712)
+parser.add_argument(
+    "--max-concurrent",
+    type=int,
+    default=50,
+    help="Max concurrent agents (default: 50)"
+)
+```
+
+**Usage:**
+```bash
+python -m app.simulation.orchestrator \
+    --hours 6 \
+    --max-concurrent 50 \
+    --process-all-agents
 ```
 
 **Benefits:**
@@ -872,158 +906,41 @@ CREATE INDEX idx_simulation_checkpoints_cycle ON simulation_checkpoints(cycle_nu
 
 ## 6. LLM API Rate Limiting Strategy
 
-### Problem Statement
+**Status:** NOT APPLICABLE - Personas Already Generated
 
-**Current LLM Configuration:**
-```python
-max_concurrent_requests: int = 1  # Rate limiting for free tier
-fallback_models: [
-    "minimax/minimax-m2.1",
-    "nvidia/nemotron-3-nano-30b-a3b:free",
-    "google/gemini-2.5-flash-lite",
-]
-max_retries: int = 5
-retry_delay: float = 2.0  # Exponential backoff
-```
+### Problem Statement (Historical)
 
-**Analysis:**
-- **Persona generation:** 372 agents × 1 LLM call each = 372 calls
-- **Free tier limits:** Unknown (typically 10-100 requests/minute)
-- **Execution time:** 372 × 2s = 744 seconds (12.4 minutes) at 1 concurrent
-- **With 50 concurrent:** 372 × 2s / 50 = ~15 seconds (if API allows)
+**Note:** This section was planned for persona generation via LLM API calls. However, all 372 agent personas have already been pre-generated and seeded into the database via `seed_simulation_agents.py`.
 
-### Solution 1: Implement Adaptive Rate Limiting (RECOMMENDED)
+**Current State:**
+- **Persona Source:** `agents` table in database
+- **Seeding Script:** `scripts/seed_simulation_agents.py`
+- **Seeding Date:** Already completed (372 agents)
+- **LLM Calls:** Zero - personas loaded from database, not generated via API
+- **Implementation:** `app/simulation/orchestrator.py` loads agents via `_load_agents()` method (line 446-483)
 
-```python
-class AdaptiveRateLimiter:
-    """Rate limiter with dynamic adjustment based on 429 responses."""
-    
-    def __init__(self, initial_rate: float = 10.0):
-        """
-        Args:
-            initial_rate: Initial requests per second
-        """
-        self.current_rate = initial_rate
-        self.min_rate = 1.0
-        self.max_rate = 50.0
-        self.last_request_time: float = 0
-        self._lock = asyncio.Lock()
-    
-    async def acquire(self):
-        """Acquire permission to make a request."""
-        async with self._lock:
-            now = time.time()
-            wait_time = 1.0 / self.current_rate - (now - self.last_request_time)
-            
-            if wait_time > 0:
-                await asyncio.sleep(wait_time)
-            
-            self.last_request_time = time.time()
-    
-    def on_429(self, retry_after: int = 60):
-        """Called when receiving 429 Too Many Requests."""
-        async with self._lock:
-            # Reduce rate by 50%
-            self.current_rate = max(self.min_rate, self.current_rate * 0.5)
-            logger.warning(f"Rate limit hit, reducing to {self.current_rate} req/s")
-    
-    def on_success(self):
-        """Called when request succeeds."""
-        async with self._lock:
-            # Gradually increase rate
-            self.current_rate = min(self.max_rate, self.current_rate * 1.1)
-```
+### Actions Required
 
-**Integration with LLM Client:**
+**NONE** - No LLM API calls needed for current simulation run.
 
-```python
-class LLMClient:
-    def __init__(self, config: SimulationConfig):
-        ...
-        self.rate_limiter = AdaptiveRateLimiter(initial_rate=10.0)
-    
-    async def complete(self, prompt: str, ...):
-        for retry_attempt in range(self.config.max_retries):
-            try:
-                await self.rate_limiter.acquire()
-                
-                response = await client.chat.completions.create(...)
-                self.rate_limiter.on_success()
-                return response.choices[0].message.content, usage_info
-            
-            except openai.RateLimitError as e:
-                retry_after = e.headers.get('Retry-After', 60)
-                self.rate_limiter.on_429(retry_after)
-                await asyncio.sleep(retry_after)
-            
-            except Exception as e:
-                if retry_attempt < self.config.max_retries - 1:
-                    delay = self.config.retry_delay * (2 ** retry_attempt)
-                    await asyncio.sleep(delay)
-```
+**Future Considerations:**
 
-**Benefits:**
-- Automatically adapts to rate limits
-- Reduces unnecessary retries
-- Balances speed and stability
+If personas need to be regenerated (e.g., schema changes, additional diversity):
+1. Use existing `seed_simulation_agents.py` script with new Excel/JSON data
+2. Regenerate via `app/simulation/cli.py generate` command (uses LLM API)
+3. At that time, consider adaptive rate limiting from original design
+4. Current simulation requires no LLM changes
+
+**Benefits of Pre-Generated Personas:**
+- ✅ Zero LLM latency
+- ✅ No API costs
+- ✅ No rate limiting concerns
+- ✅ Instant agent loading from database
+- ✅ Predictable simulation behavior
 
 **Trade-offs:**
-- Slightly more complex
-- May take time to ramp up to optimal rate
-
-### Solution 2: Queue-Based Throttling (ALTERNATIVE)
-
-Use a queue to control request rate:
-
-```python
-class TokenBucketRateLimiter:
-    """Token bucket algorithm for rate limiting."""
-    
-    def __init__(self, rate: float, capacity: int):
-        """
-        Args:
-            rate: Tokens per second
-            capacity: Max tokens in bucket
-        """
-        self.rate = rate
-        self.capacity = capacity
-        self.tokens = capacity
-        self.last_refill = time.time()
-        self._lock = asyncio.Lock()
-    
-    async def acquire(self, tokens: int = 1):
-        """Acquire tokens from bucket."""
-        async with self._lock:
-            now = time.time()
-            elapsed = now - self.last_refill
-            self.tokens = min(self.capacity, self.tokens + elapsed * self.rate)
-            self.last_refill = now
-            
-            while self.tokens < tokens:
-                wait_time = (tokens - self.tokens) / self.rate
-                await asyncio.sleep(wait_time)
-                now = time.time()
-                elapsed = now - self.last_refill
-                self.tokens = min(self.capacity, self.tokens + elapsed * self.rate)
-                self.last_refill = now
-            
-            self.tokens -= tokens
-```
-
-**Benefits:**
-- Simple and proven algorithm
-- Allows bursts up to capacity
-- Smooth request distribution
-
-**Trade-offs:**
-- Fixed rate (no adaptation)
-- Need to tune rate and capacity
-
-### **RECOMMENDATION: Solution 1 (Adaptive Rate Limiting)**
-- Start at 10 requests/second
-- Auto-adjust based on 429 responses
-- Ramp up to 50 req/s if no limits hit
-- Use exponential backoff on retries
+- ⚠️ Requires manual regeneration if schema changes
+- ⚠️ Not flexible for real-time persona customization
 
 ---
 
@@ -1032,25 +949,27 @@ class TokenBucketRateLimiter:
 ### Phase 1: Infrastructure Changes (1 day)
 
 **Tasks:**
-1. Update database connection pool in `app/main.py`
-2. Add event batching to `app/simulation/agent/actions.py`
-3. Create `SimulationAPIClient` with connection pooling
-4. Add simulation mode bypass to rate limiting
+1. Update database connection pool in `app/simulation/orchestrator.py`
+2. Add asyncio.gather() concurrent execution to `_run_cycle()`
+3. Add CLI option `--max-concurrent` for concurrency control
+4. Implement adaptive concurrency manager class
+5. Add checkpoint manager class (TODO - see Phase 3)
+6. Remove LLM persona generation tasks (already done)
 
 **Commands:**
 ```bash
-# 1. Edit app/main.py
-# Update pool_size from 5 to 50, add pool_use_lifo=True
+# 1. Edit app/simulation/orchestrator.py
+# Update engine configuration (line 667)
+# Configure: pool_size=50, max_overflow=10, pool_use_lifo=True, pool_pre_ping=True
 
-# 2. Create app/simulation/agent/event_batcher.py
-# Implement EventBatcher class
+# 2. Edit app/simulation/orchestrator.py
+# Replace _run_cycle() with _run_cycle_concurrent()
+# Add asyncio.gather() with semaphore
+# Add AdaptiveConcurrencyManager class
 
-# 3. Create app/simulation/api_client.py
-# Implement SimulationAPIClient with httpx.AsyncClient
-
-# 4. Edit app/main.py
-# Add exempt_simulation_rate_limit decorator
-# Apply to cart and checkout endpoints
+# 3. Edit app/simulation/orchestrator.py
+# Add --max-concurrent CLI argument (line 712)
+# Default to 50, range 20-100
 ```
 
 ### Phase 2: Concurrency & Monitoring (1 day)
@@ -1083,68 +1002,70 @@ class TokenBucketRateLimiter:
 **Tasks:**
 1. Implement file-based checkpointing
 2. Add emergency checkpoint on crash
-3. Implement LLM adaptive rate limiting
-4. Add comprehensive error logging
+3. Add comprehensive error logging
+4. **Remove LLM rate limiting** (not needed - personas pre-generated)
 
 **Commands:**
 ```bash
 # 1. Create app/simulation/checkpoint_manager.py
 # Implement CheckpointManager class
+# Save to JSON files every 5 minutes
+# Keep 10 most recent checkpoints
 
 # 2. Edit app/simulation/orchestrator.py
 # Integrate CheckpointManager into _run_loop()
+# Add --checkpoint-interval CLI option
 # Add resume-from-checkpoint logic
 
-# 3. Edit app/simulation/generators/llm_client.py
-# Add AdaptiveRateLimiter
-# Integrate with complete() method
-
-# 4. Create app/simulation/error_handler.py
-# Implement error classification and logging
+# 3. Create app/simulation/error_handler.py
+# Implement error classification (transient/permanent)
+# Add comprehensive error logging to file
 ```
 
 ### Phase 4: Testing & Validation (2 days)
 
-**Test Progression:**
-1. **10 agents** - Validate concurrency and monitoring
-2. **50 agents** - Test DB pool and API rate limiting
-3. **100 agents** - Check resource usage and checkpointing
-4. **250 agents** - Stress test with error injection
-5. **372 agents** - Full scale run with monitoring
+**Test Progression (Simplified - Start at Medium Scale):**
+1. **50 agents** - Validate core functionality, DB pool, basic concurrency
+2. **100 agents** - Verify resource usage, adaptive concurrency, checkpointing
+3. **250 agents** - Stress test, identify bottlenecks
+4. **372 agents** - Full scale production run
 
 **Commands:**
 ```bash
-# Test 10 agents
-python -m app.simulation.orchestrator \
-    --hours 1 \
-    --time-scale 24 \
-    --max-concurrent 10 \
-    --debug
-
-# Test 50 agents
-python -m app.simulation.orchestrator \
-    --hours 2 \
+# Test 1: Medium scale (50 agents) - START HERE
+SIMULATION_MODE=true python -m app.simulation.orchestrator \
+    --hours 0.5 \
     --time-scale 24 \
     --max-concurrent 50 \
-    --checkpoint-interval 300 \
+    --process-all-agents \
     --log-file test_50_agents.log
 
-# Test 100 agents
-python -m app.simulation.orchestrator \
-    --hours 4 \
+# Test 2: Large scale (100 agents)
+SIMULATION_MODE=true python -m app.simulation.orchestrator \
+    --hours 1 \
     --time-scale 24 \
     --max-concurrent 80 \
-    --checkpoint-interval 300
+    --process-all-agents \
+    --log-file test_100_agents.log
 
-# Full 372 agents
-python -m app.simulation.orchestrator \
+# Test 3: Extended scale (250 agents)
+SIMULATION_MODE=true python -m app.simulation.orchestrator \
+    --hours 2 \
+    --time-scale 24 \
+    --max-concurrent 100 \
+    --process-all-agents \
+    --log-file test_250_agents.log
+
+# Test 4: Full scale (372 agents)
+SIMULATION_MODE=true python -m app.simulation.orchestrator \
     --hours 6 \
     --time-scale 24 \
     --max-concurrent 50 \
-    --checkpoint-interval 300 \
-    --debug \
-    --log-file full_run.log
+    --process-all-agents \
+    --log-file full_372_agents.log
 ```
+
+**Note:** Skip 2-agent and 10-agent smoke tests - already validated in previous runs. Start directly at 50 agents.
 
 ### Phase 5: Documentation & Deployment (1 day)
 
