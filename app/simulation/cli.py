@@ -7,6 +7,7 @@ Usage:
     python -m app.simulation.cli generate --count 10 --preview-only
 """
 
+# Testing Lazygit with this comment.
 import asyncio
 import logging
 import sys
@@ -17,7 +18,10 @@ import click
 from rich.console import Console
 
 from app.simulation.config import SimulationConfig
-from app.simulation.exporters.excel_exporter import IncrementalPersonaExporter, PersonaExcelExporter
+from app.simulation.exporters.excel_exporter import (
+    IncrementalPersonaExporter,
+    PersonaExcelExporter,
+)
 from app.simulation.exporters.preview_dashboard import (
     PersonaPreviewDashboard,
     show_cost_estimate,
@@ -172,7 +176,9 @@ def generate(
     if incremental and mode == "append":
         console.print("[dim]Incremental mode: ON (saving after each batch)[/dim]")
     elif incremental and mode != "append":
-        console.print("[yellow]Warning: --incremental only works with --append. Using standard mode.[/yellow]")
+        console.print(
+            "[yellow]Warning: --incremental only works with --append. Using standard mode.[/yellow]"
+        )
         incremental = False
 
     # Create generator
@@ -190,7 +196,9 @@ def generate(
 
                 def batch_callback(batch_personas):
                     batch_count[0] += len(batch_personas)
-                    console.print(f"[dim]Saved batch of {len(batch_personas)} personas (total saved: {batch_count[0]})[/dim]")
+                    console.print(
+                        f"[dim]Saved batch of {len(batch_personas)} personas (total saved: {batch_count[0]})[/dim]"
+                    )
 
                 personas, cost_summary = asyncio.run(
                     generator.generate_batch_streaming(
@@ -201,7 +209,9 @@ def generate(
                 )
         else:
             # Standard generation (non-incremental)
-            personas, cost_summary = asyncio.run(generator.generate_batch(count=count, show_progress=True))
+            personas, cost_summary = asyncio.run(
+                generator.generate_batch(count=count, show_progress=True)
+            )
     except Exception as e:
         console.print(f"[red]Error generating personas:[/red] {e}")
         sys.exit(1)
@@ -269,14 +279,19 @@ def config_show():
     config = SimulationConfig()
 
     console.print()
-    console.print(Panel(f"[bold]LLM Provider:[/bold] {config.llm_provider}\n"
-                       f"[bold]Model:[/bold] {config.model}\n"
-                       f"[bold]Temperature:[/bold] {config.llm_temperature}\n"
-                       f"[bold]Max Tokens:[/bold] {config.llm_max_tokens}\n"
-                       f"[bold]Default Count:[/bold] {config.default_persona_count}\n"
-                       f"[bold]Output Dir:[/bold] {config.output_dir}\n"
-                       f"[bold]API Key Set:[/bold] {bool(config.llm_api_key)}",
-                       title="[bold]Current Configuration[/bold]", border_style="blue"))
+    console.print(
+        Panel(
+            f"[bold]LLM Provider:[/bold] {config.llm_provider}\n"
+            f"[bold]Model:[/bold] {config.model}\n"
+            f"[bold]Temperature:[/bold] {config.llm_temperature}\n"
+            f"[bold]Max Tokens:[/bold] {config.llm_max_tokens}\n"
+            f"[bold]Default Count:[/bold] {config.default_persona_count}\n"
+            f"[bold]Output Dir:[/bold] {config.output_dir}\n"
+            f"[bold]API Key Set:[/bold] {bool(config.llm_api_key)}",
+            title="[bold]Current Configuration[/bold]",
+            border_style="blue",
+        )
+    )
 
 
 @cli.command()
@@ -285,11 +300,21 @@ def categories():
     from app.simulation.generators.prompts import AVAILABLE_CATEGORIES, US_REGIONS
 
     console.print()
-    console.print(Panel("\n".join(f"  • {cat}" for cat in AVAILABLE_CATEGORIES),
-                       title="[bold]Available Product Categories[/bold]", border_style="green"))
+    console.print(
+        Panel(
+            "\n".join(f"  • {cat}" for cat in AVAILABLE_CATEGORIES),
+            title="[bold]Available Product Categories[/bold]",
+            border_style="green",
+        )
+    )
     console.print()
-    console.print(Panel("\n".join(f"  • {region}" for region in US_REGIONS),
-                       title="[bold]Available US Regions[/bold]", border_style="blue"))
+    console.print(
+        Panel(
+            "\n".join(f"  • {region}" for region in US_REGIONS),
+            title="[bold]Available US Regions[/bold]",
+            border_style="blue",
+        )
+    )
 
 
 if __name__ == "__main__":
