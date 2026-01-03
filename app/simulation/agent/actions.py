@@ -763,13 +763,22 @@ class ShoppingActions:
         )
 
 
-# Module-level singleton for use in graph nodes
+# Thread-local storage for parallel agent execution
+# Each thread gets its own ShoppingActions instance with its own DB session
+import threading
+
+_actions_thread_local = threading.local()
+
+# Legacy global instance for backwards compatibility with sequential execution
 _actions_instance: Optional[ShoppingActions] = None
 
 
 def set_actions(db: Session) -> ShoppingActions:
     """
-    Set the global ShoppingActions instance.
+    Set the ShoppingActions instance for the current thread.
+
+    In parallel execution mode, each thread gets its own instance.
+    Also sets the global instance for backwards compatibility.
 
     Args:
         db: SQLAlchemy Session
@@ -778,13 +787,23 @@ def set_actions(db: Session) -> ShoppingActions:
         ShoppingActions instance
     """
     global _actions_instance
-    _actions_instance = ShoppingActions(db)
-    return _actions_instance
+    instance = ShoppingActions(db)
+
+    # Set thread-local instance for parallel execution
+    _actions_thread_local.instance = instance
+
+    # Also set global for backwards compatibility with sequential mode
+    _actions_instance = instance
+
+    return instance
 
 
 def get_actions() -> ShoppingActions:
     """
-    Get the global ShoppingActions instance.
+    Get the ShoppingActions instance for the current thread.
+
+    First tries thread-local storage (parallel mode), then falls back
+    to global instance (sequential mode).
 
     Raises:
         RuntimeError: If actions not initialized via set_actions()
@@ -792,8 +811,27 @@ def get_actions() -> ShoppingActions:
     Returns:
         ShoppingActions instance
     """
-    if _actions_instance is None:
-        raise RuntimeError(
-            "ShoppingActions not initialized. Call set_actions(db) first."
-        )
-    return _actions_instance
+    # Try thread-local first (parallel mode)
+    instance = getattr(_actions_thread_local, 'instance', None)
+    if instance is not None:
+        return instance
+
+    # Fall back to global (sequential mode / backwards compatibility)
+    if _actions_instance is not None:
+        return _actions_instance
+
+    raise RuntimeError(
+        "ShoppingActions not initialized. Call set_actions(db) first."
+    )
+
+
+def clear_actions() -> None:
+    """
+    Clear the ShoppingActions instance for the current thread.
+
+    Used for cleanup after parallel execution completes.
+    """
+    global _actions_instance
+    if hasattr(_actions_thread_local, 'instance'):
+        delattr(_actions_thread_local, 'instance')
+    _actions_instance = None
