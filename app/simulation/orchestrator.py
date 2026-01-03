@@ -27,11 +27,13 @@ from rich.table import Table
 from rich.panel import Panel
 from rich.layout import Layout
 from rich.text import Text
+from rich.progress import Progress, BarColumn, TextColumn
 from rich.logging import RichHandler
 
 from app.offer_engine import get_scheduler, get_config, reset_singletons
 from app.simulation.agent.state import AgentState, create_initial_state
-from app.simulation.agent.actions import set_actions, get_actions
+from app.simulation.agent.actions import set_actions, get_actions, ShoppingActions
+from app.simulation.agent.remote_actions import RemoteShoppingActions
 from app.simulation.agent.shopping_graph import get_shopping_graph
 
 logger = logging.getLogger(__name__)
@@ -82,9 +84,15 @@ class SimulationStats:
     events_created: int = 0
     errors: int = 0
     last_error: str = ""
+    api_latency_ms: List[float] = field(default_factory=list)
 
     def elapsed_hours(self) -> float:
         return (time.time() - self.start_time) / 3600
+    
+    def avg_latency(self) -> float:
+        if not self.api_latency_ms:
+            return 0.0
+        return sum(self.api_latency_ms[-50:]) / min(len(self.api_latency_ms), 50)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -122,6 +130,8 @@ class SimulationOrchestrator:
         default_store_id: Optional[str] = None,
         process_all_agents: bool = True,
         debug_mode: bool = False,
+        use_api: bool = False,
+        api_url: str = "http://localhost:8000"
     ):
         """
         Initialize orchestrator.
@@ -129,16 +139,18 @@ class SimulationOrchestrator:
         Args:
             db: SQLAlchemy Session
             time_scale: Time compression ratio (24 = 1 real hour = 24 simulated hours)
-                        This overrides TIME_SCALE environment variable.
             default_store_id: Default store for shopping sessions
-            process_all_agents: If True, scheduler processes all agents. If False, only processes filtered agents
+            process_all_agents: If True, scheduler processes all agents.
             debug_mode: Enable debug logging in dashboard
+            use_api: If True, use RemoteShoppingActions to hit API
+            api_url: Base URL for API calls
         """
         self.db = db
         self.time_scale = time_scale
         self.default_store_id = default_store_id or self._get_default_store()
         self.process_all_agents = process_all_agents
         self.debug_mode = debug_mode
+        self.use_api = use_api
 
         # Reset offer engine singletons for fresh initialization
         logger.info("Resetting offer engine singletons...")
@@ -156,15 +168,18 @@ class SimulationOrchestrator:
                 f"Updated scheduler time_scale to {self.time_scale} (was {old_scale})"
             )
 
-        # Log final time_scale values for debugging
-        logger.info(
-            f"Orchestrator time_scale: {self.time_scale}, "
-            f"scheduler.config.time_scale: {self.scheduler.config.time_scale}, "
-            f"time_service.config.time_scale: {self.scheduler.time_service.config.time_scale}"
-        )
-
-        # Initialize actions
-        set_actions(db)
+        # Initialize actions (Local or Remote)
+        if self.use_api:
+            logger.info(f"Using RemoteShoppingActions targeting {api_url}")
+            # We must set the global singleton so the graph nodes pick it up
+            global _actions_instance
+            remote_actions = RemoteShoppingActions(db, api_url)
+            # Manually inject into the singleton slot in actions.py
+            import app.simulation.agent.actions as actions_module
+            actions_module._actions_instance = remote_actions
+        else:
+            logger.info("Using local direct DB ShoppingActions")
+            set_actions(db)
 
         # Get shopping graph
         self.shopping_graph = get_shopping_graph()
@@ -214,6 +229,28 @@ class SimulationOrchestrator:
             f.write(f"[{datetime.now()}]\n{error_msg}\n")
             f.write("-" * 80 + "\n\n")
 
+    def _get_latest_simulation_time(self) -> Optional[datetime]:
+        """Fetch the latest simulated time from DB orders to resume from crash."""
+        try:
+            # Check orders first as they represent completed actions
+            result = self.db.execute(
+                text("SELECT MAX(created_at) FROM orders WHERE is_simulated = true")
+            ).fetchone()
+            if result and result[0]:
+                return result[0]
+            
+            # Fallback to shopping sessions
+            result = self.db.execute(
+                text("SELECT MAX(started_at) FROM shopping_sessions WHERE is_simulated = true")
+            ).fetchone()
+            if result and result[0]:
+                return result[0]
+                
+            return None
+        except Exception as e:
+            logger.error(f"Failed to fetch latest simulation time: {e}")
+            return None
+
     async def run(
         self,
         duration_hours: float,
@@ -228,7 +265,7 @@ class SimulationOrchestrator:
             duration_hours: Real-time hours to run
             agent_ids: Specific agent IDs to run, or None for all active
             show_dashboard: Show Rich terminal dashboard
-            start_date: Simulated calendar start date (default: 2024-01-01)
+            start_date: Simulated calendar start date. If None, tries to resume from DB.
 
         Returns:
             Final SimulationStats
@@ -246,31 +283,30 @@ class SimulationOrchestrator:
             logger.error("No agents found!")
             return self.stats
 
+        # Determine start date (Resiliency)
+        latest_sim_time = self._get_latest_simulation_time()
+        
+        if start_date:
+            calendar_start = start_date
+            logger.info(f"Using provided start date: {calendar_start}")
+        elif latest_sim_time:
+            calendar_start = latest_sim_time.date()
+            logger.info(f"Resuming from DB timestamp: {latest_sim_time} (Date: {calendar_start})")
+            # Advance time service to this point to avoid re-simulating past
+            self.scheduler.time_service.start_simulation(calendar_start=calendar_start)
+            # Force set the time in time_service if possible, or just let it flow
+            # The scheduler uses relative offsets, so restarting might reset 'simulated_start_date'
+            # We need to be careful. For now, we trust start_simulation sets the base.
+        else:
+            calendar_start = date(2024, 1, 1)
+            logger.info(f"No history found, starting fresh: {calendar_start}")
+
         # Ensure simulation is started
         is_active = self.scheduler.time_service.is_simulation_active()
-        logger.info(f"Simulation active check: {is_active}")
-        logger.info(f"  simulation_mode: {self.scheduler.config.simulation_mode}")
-        logger.info(
-            f"  time_service._is_active: {self.scheduler.time_service._is_active}"
-        )
-        logger.info(f"  requested start_date: {start_date}")
-
         if not is_active:
-            calendar_start = start_date or date(2024, 1, 1)
-            logger.info(f"Starting simulation at {calendar_start}")
             self.scheduler.time_service.start_simulation(calendar_start=calendar_start)
-            logger.info(
-                f"Simulation started. Active: {self.scheduler.time_service.is_simulation_active()}"
-            )
-        else:
-            logger.warning(
-                "Simulation already active, skipping start_simulation() call"
-            )
-
-        # Calculate timing
-        # Each cycle advances 1 simulated hour. Interval calculated to achieve time_scale cycles per real hour.
-        # At time_scale=96: 37.5 real seconds per cycle (3600/96)
-        # Results in 96 cycles per real hour, each advancing 1 simulated hour.
+        
+        # Advance interval calculation
         advance_interval_seconds = 3600 / self.time_scale
 
         start_time = time.time()
@@ -278,7 +314,7 @@ class SimulationOrchestrator:
 
         if show_dashboard:
             with Live(
-                self._build_dashboard(), refresh_per_second=1, console=self.console
+                self._build_dashboard(), refresh_per_second=4, console=self.console
             ) as live:
                 self._setup_signal_handlers()
                 try:
@@ -337,6 +373,7 @@ class SimulationOrchestrator:
     ):
         """Main simulation loop."""
         while time.time() < target_end_time and not self._stop_requested:
+            cycle_start = time.time()
             try:
                 await self._run_cycle(agents)
             except Exception as e:
@@ -353,18 +390,20 @@ class SimulationOrchestrator:
             if live:
                 live.update(self._build_dashboard())
 
-            # Sleep until next cycle
-            await asyncio.sleep(interval_seconds)
+            # Sleep management for time_scale accuracy
+            elapsed = time.time() - cycle_start
+            sleep_time = max(0, interval_seconds - elapsed)
+            
+            if sleep_time > 0:
+                await asyncio.sleep(sleep_time)
+            else:
+                logger.warning(f"Cycle took {elapsed:.2f}s, exceeding interval {interval_seconds:.2f}s (System overload?)")
 
     async def _run_cycle(self, agents: List[Dict[str, Any]]):
-        """Execute one simulation cycle."""
-        # 1. Process offers/agents for this cycle
-        # Note: Wall clock time + time_scale multiplication in now() handles time advancement.
-        # Each cycle sleeps for 3600/time_scale seconds, which naturally advances
-        # simulated time by 1 hour when now() multiplies elapsed time by time_scale.
-        # We pass hours=0 to avoid double-counting (advance_time + wall clock).
+        """Execute one simulation cycle with batched concurrency."""
+        # 1. Advance Time
         advance_result = self.scheduler.advance_simulation_time(
-            hours=0,  # No manual time advancement - wall clock handles it
+            hours=0,
             agent_ids=self.agent_ids,
             process_all_agents=self.process_all_agents,
         )
@@ -376,37 +415,40 @@ class SimulationOrchestrator:
         sim_date = sim_datetime.date()
         self.stats.simulated_datetime = sim_datetime
 
-        # Handle case where sim_datetime might be None
         if sim_datetime is None:
             logger.warning("No simulated datetime available, skipping agent processing")
             return
 
-        # 3. Process each agent
-        for agent in agents:
-            self.stats.agents_processed += 1
+        # 3. Process agents in batches (Phase 2 Concurrency)
+        BATCH_SIZE = 50
+        
+        for i in range(0, len(agents), BATCH_SIZE):
+            batch = agents[i:i + BATCH_SIZE]
+            tasks = []
+            
+            for agent in batch:
+                tasks.append(self._safe_run_agent(agent, sim_date))
+                
+            # Run batch concurrently
+            results = await asyncio.gather(*tasks)
+            
+            # Process results
+            for result in results:
+                self.stats.agents_processed += 1
+                if result:
+                    if result.get("should_shop"):
+                        self.stats.agents_shopped += 1
+                        self.stats.sessions_created += 1
+                        self.stats.events_created += result.get("events_created", 0)
 
-            try:
-                result = await self._run_agent(agent, sim_date)
-
-                if result.get("should_shop"):
-                    self.stats.agents_shopped += 1
-                    self.stats.sessions_created += 1
-                    self.stats.events_created += result.get("events_created", 0)
-
-                    if result.get("checkout_decision") == "complete":
-                        self.stats.checkouts_completed += 1
-                    elif result.get("checkout_decision") == "abandon":
-                        self.stats.checkouts_abandoned += 1
-
-            except Exception as e:
-                agent_id = agent.get("agent_id", "unknown")
-                error_msg = (
-                    f"Agent {agent_id} error: {str(e)}\n{traceback.format_exc()}"
-                )
-                logger.error(error_msg)
-                self._log_error_to_file(error_msg)
-                self.stats.errors += 1
-                self.stats.last_error = f"Agent {agent_id[:15]}: {str(e)}"[:100]
+                        if result.get("checkout_decision") == "complete":
+                            self.stats.checkouts_completed += 1
+                        elif result.get("checkout_decision") == "abandon":
+                            self.stats.checkouts_abandoned += 1
+            
+            # Commit mid-cycle to free up connections/locks if using direct DB
+            if not self.use_api:
+                self.db.commit()
 
         # 4. Log progress
         logger.info(
@@ -416,17 +458,27 @@ class SimulationOrchestrator:
             f"checkouts={self.stats.checkouts_completed}"
         )
 
+    async def _safe_run_agent(self, agent: Dict[str, Any], sim_date: date) -> Optional[Dict[str, Any]]:
+        """Wrapper to handle individual agent errors without crashing batch."""
+        try:
+            return await self._run_agent(agent, sim_date)
+        except Exception as e:
+            agent_id = agent.get("agent_id", "unknown")
+            error_msg = f"Agent {agent_id} error: {str(e)}\n{traceback.format_exc()}"
+            logger.error(error_msg)
+            self._log_error_to_file(error_msg)
+            self.stats.errors += 1
+            self.stats.last_error = f"Agent {agent_id[:15]}: {str(e)}"[:100]
+            return None
+
     async def _run_agent(self, agent: Dict[str, Any], sim_date: date) -> Dict[str, Any]:
-        """
-        Run a single agent through the shopping graph.
+        """Run a single agent through the shopping graph (offloaded to thread)."""
+        # Offload synchronous graph execution to a thread to prevent blocking the event loop
+        # This allows asyncio.gather to actually run agents concurrently
+        return await asyncio.to_thread(self._run_agent_sync, agent, sim_date)
 
-        Args:
-            agent: Agent record from database
-            sim_date: Current simulated date
-
-        Returns:
-            Final state dictionary
-        """
+    def _run_agent_sync(self, agent: Dict[str, Any], sim_date: date) -> Dict[str, Any]:
+        """Synchronous execution of the agent graph."""
         # Create initial state
         initial_state = create_initial_state(
             agent=agent,
@@ -438,19 +490,23 @@ class SimulationOrchestrator:
         # Run the graph
         config = {"configurable": {"thread_id": agent.get("agent_id", "unknown")}}
 
-        # Execute graph (sync invoke, wrapped in async)
-        final_state = self.shopping_graph.invoke(initial_state, config)  # type: ignore
+        # Execute graph (sync invoke)
+        # We use invoke() because the underlying actions are synchronous (httpx.Client)
+        # and we are running inside a thread.
+        final_state = self.shopping_graph.invoke(initial_state, config)
 
-        return final_state
+        return final_state  # type: ignore
 
     def _load_agents(
-        self, agent_ids: Optional[List[str]] = None
+        self,
+        agent_ids: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """Load agents from database."""
+        # Increase limit for scaling
+        limit = 1000 if not agent_ids else len(agent_ids)
+        
         if agent_ids:
             logger.info(f"Loading specific agents: {agent_ids}")
-            # Use IN clause with proper parameter binding for multiple IDs
-            # Build parameterized query for variable number of IDs
             placeholders = ", ".join([f":id_{i}" for i in range(len(agent_ids))])
             params = {f"id_{i}": aid for i, aid in enumerate(agent_ids)}
 
@@ -461,10 +517,10 @@ class SimulationOrchestrator:
             result = self.db.execute(text(query), params)
         else:
             result = self.db.execute(
-                text("""
+                text(f"""
                 SELECT * FROM agents
                 WHERE is_active = true
-                LIMIT 100
+                LIMIT {limit}
             """)
             )
 
@@ -474,11 +530,7 @@ class SimulationOrchestrator:
 
         # Log what we found
         loaded_ids = [a.get("agent_id", "unknown") for a in agents]
-        logger.info(f"Loaded {len(agents)} agents: {loaded_ids}")
-
-        if agent_ids and len(agents) < len(agent_ids):
-            missing = set(agent_ids) - set(loaded_ids)
-            logger.warning(f"Some agents not found or inactive: {missing}")
+        logger.info(f"Loaded {len(agents)} agents.")
 
         return agents
 
@@ -519,6 +571,12 @@ class SimulationOrchestrator:
         table.add_row("Events Created", str(self.stats.events_created))
         table.add_row("Offers Assigned", str(self.stats.offers_assigned))
         table.add_row("─" * 18, "─" * 13)
+        
+        # Latency metric
+        latency = self.stats.avg_latency()
+        if latency > 0:
+            table.add_row("Avg API Latency", f"{latency:.0f}ms", style="yellow")
+            
         table.add_row(
             "Errors",
             str(self.stats.errors),
@@ -528,7 +586,8 @@ class SimulationOrchestrator:
             table.add_row("Last Error", self.stats.last_error, style="red")
 
         title = "[bold blue]VoiceOffers Simulation[/bold blue]"
-        subtitle = f"Time Scale: {self.time_scale}x | LangSmith: {'ON' if os.getenv('LANGCHAIN_TRACING_V2') else 'OFF'}"
+        mode = "Remote API" if self.use_api else "Local DB"
+        subtitle = f"Scale: {self.time_scale}x | Mode: {mode} | Agents: {len(self.agent_ids) if self.agent_ids else 'All'}"
 
         return Panel(table, title=title, subtitle=subtitle, border_style="blue")
 
@@ -540,34 +599,31 @@ class SimulationOrchestrator:
             Layout(name="logs", ratio=2),
         )
 
-        # Stats table
+        # Re-use simple dashboard logic for stats table part
+        # But we need to construct it manually to fit in layout
         table = Table(title="Simulation Statistics", show_header=True, box=None)
         table.add_column("Metric", style="cyan", width=20)
         table.add_column("Value", style="green", justify="right", width=20)
 
         elapsed = self.stats.elapsed_hours()
         table.add_row("Elapsed Time", f"{elapsed:.2f}h")
-        logger.debug(
-            f"Building dashboard - stats.simulated_datetime: {self.stats.simulated_datetime}"
-        )
         sim_time_str = (
             self.stats.simulated_datetime.strftime("%Y-%m-%d %H:%M:%S")
             if self.stats.simulated_datetime
             else "N/A"
         )
-        logger.debug(f"Building dashboard - sim_time_str: {sim_time_str}")
         table.add_row("Simulated Time", sim_time_str)
         table.add_row("Cycles", str(self.stats.cycles_completed))
         table.add_row("─" * 18, "─" * 13)
         table.add_row("Agents Processed", str(self.stats.agents_processed))
         table.add_row("Agents Shopped", str(self.stats.agents_shopped))
         table.add_row("Sessions Created", str(self.stats.sessions_created))
-        table.add_row("─" * 18, "─" * 13)
         table.add_row("Checkouts", str(self.stats.checkouts_completed))
         table.add_row("Abandoned", str(self.stats.checkouts_abandoned))
-        table.add_row("Events Created", str(self.stats.events_created))
-        table.add_row("Offers Assigned", str(self.stats.offers_assigned))
-        table.add_row("─" * 18, "─" * 13)
+        
+        if self.use_api:
+             table.add_row("Avg Latency", f"{self.stats.avg_latency():.0f}ms")
+
         table.add_row(
             "Errors",
             str(self.stats.errors),
@@ -595,8 +651,9 @@ class SimulationOrchestrator:
         )
         layout["logs"].update(log_panel)
 
-        title = "[bold blue]VoiceOffers Simulation (Debug Mode)[/bold blue]"
-        subtitle = f"Time Scale: {self.time_scale}x | Press Ctrl+C to stop"
+        title = "[bold blue]VoiceOffers Simulation (Debug)[/bold blue]"
+        mode = "Remote API" if self.use_api else "Local DB"
+        subtitle = f"Scale: {self.time_scale}x | Mode: {mode}"
 
         return Panel(layout, title=title, subtitle=subtitle, border_style="blue")
 
@@ -610,22 +667,11 @@ async def run_simulation(
     process_all_agents: bool = False,
     debug_mode: bool = False,
     log_file: Optional[str] = None,
+    use_api: bool = False,
+    api_url: str = "http://localhost:8000"
 ) -> SimulationStats:
     """
     Convenience function to run simulation.
-
-    Args:
-        duration_hours: Real hours to run
-        time_scale: Time compression (24 = 1h real = 1 day simulated)
-        agent_ids: Specific agents or None for all
-        show_dashboard: Show Rich dashboard
-        start_date: Simulated start date as ISO string (YYYY-MM-DD)
-        process_all_agents: If True, scheduler processes all agents. If False, only processes filtered agents
-        debug_mode: Enable debug logging in dashboard
-        log_file: Optional file to write logs to
-
-    Returns:
-        Final SimulationStats
     """
     from dotenv import load_dotenv
 
@@ -663,8 +709,15 @@ async def run_simulation(
     if db_url.startswith("postgres://"):
         db_url = db_url.replace("postgres://", "postgresql://", 1)
 
-    # Create engine and session
-    engine = create_engine(db_url)
+    # Phase 4: Pooling Optimization
+    # Create engine with increased pool size for concurrency
+    engine = create_engine(
+        db_url,
+        pool_size=20,          # Increased from default 5
+        max_overflow=40,       # Allow more overflow
+        pool_timeout=30,
+        pool_pre_ping=True
+    )
     Session = sessionmaker(bind=engine)
     db = Session()
 
@@ -674,6 +727,8 @@ async def run_simulation(
             time_scale=time_scale,
             process_all_agents=process_all_agents,
             debug_mode=debug_mode,
+            use_api=use_api,
+            api_url=api_url
         )
         # Parse start_date string to date object
         parsed_start_date = None
@@ -688,6 +743,7 @@ async def run_simulation(
         )
     finally:
         db.close()
+        engine.dispose()
 
 
 if __name__ == "__main__":
@@ -697,17 +753,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Run VoiceOffers simulation",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  # Run 1 hour simulation with debug logs visible
-  python -m app.simulation.orchestrator --hours 1 --debug
-
-  # Run with logs saved to file
-  python -m app.simulation.orchestrator --hours 6 --log-file sim.log
-
-  # Run without dashboard (logs to console)
-  python -m app.simulation.orchestrator --hours 6 --no-dashboard
-        """,
     )
     parser.add_argument(
         "--hours", type=float, default=6.0, help="Duration in real hours (default: 6.0)"
@@ -722,7 +767,7 @@ Examples:
         "--start-date",
         type=str,
         default=None,
-        help="Simulated start date (YYYY-MM-DD, default: 2024-01-01)",
+        help="Simulated start date (YYYY-MM-DD, default: Resume from DB)",
     )
     parser.add_argument(
         "--agents", nargs="*", help="Specific agent IDs (e.g., agent_001 agent_002)"
@@ -746,6 +791,17 @@ Examples:
         default=None,
         help="Write all logs to specified file (e.g., simulation.log)",
     )
+    parser.add_argument(
+        "--api",
+        action="store_true",
+        help="Use API for cart/checkout instead of direct DB writes",
+    )
+    parser.add_argument(
+        "--api-url",
+        type=str,
+        default="http://localhost:8000",
+        help="Base URL for API calls (default: http://localhost:8000)",
+    )
 
     args = parser.parse_args()
 
@@ -760,5 +816,7 @@ Examples:
             process_all_agents=args.process_all_agents,
             debug_mode=args.debug,
             log_file=args.log_file,
+            use_api=args.api,
+            api_url=args.api_url
         )
     )
