@@ -14,10 +14,12 @@ import os
 import sys
 import signal
 import traceback
-from dataclasses import dataclass, field
+import json
+from dataclasses import dataclass, field, asdict
 from datetime import datetime, date, timedelta
 from typing import List, Dict, Any, Optional
 from io import StringIO
+from pathlib import Path
 
 from sqlalchemy import text, create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -28,6 +30,7 @@ from rich.panel import Panel
 from rich.layout import Layout
 from rich.text import Text
 from rich.logging import RichHandler
+from rich.progress import Progress, BarColumn, TaskProgressColumn, TimeRemainingColumn
 
 from app.offer_engine import get_scheduler, get_config, reset_singletons
 from app.simulation.agent.state import AgentState, create_initial_state
@@ -104,15 +107,88 @@ class SimulationStats:
         }
 
 
+@dataclass
+class SimulationCheckpoint:
+    """Checkpoint data structure."""
+
+    timestamp: float
+    cycle: int
+    agents_completed: List[str]
+    agents_in_progress: List[str]
+    stats: Dict[str, Any]
+    simulated_datetime: Optional[str] = None
+
+
+class CheckpointManager:
+    """Manages simulation checkpoints for resumability."""
+
+    def __init__(
+        self,
+        checkpoint_interval_seconds: int = 300,
+        checkpoint_dir: str = "data/checkpoints",
+    ):
+        """
+        Args:
+            checkpoint_interval_seconds: Save checkpoint every N seconds (default: 5 min)
+            checkpoint_dir: Directory to store checkpoint files
+        """
+        self.checkpoint_interval_seconds = checkpoint_interval_seconds
+        self.last_checkpoint_time: float = 0
+        self.checkpoint_path: Path = Path(checkpoint_dir)
+        self.checkpoint_path.mkdir(parents=True, exist_ok=True)
+
+    def should_checkpoint(self, current_time: float) -> bool:
+        """Check if checkpoint should be created."""
+        elapsed = current_time - self.last_checkpoint_time
+        return elapsed >= self.checkpoint_interval_seconds
+
+    def save_checkpoint(self, checkpoint: SimulationCheckpoint):
+        """Save checkpoint to JSON file."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        checkpoint_file = self.checkpoint_path / f"checkpoint_{timestamp}.json"
+
+        with open(checkpoint_file, "w") as f:
+            json.dump(asdict(checkpoint), f, indent=2)
+
+        self.last_checkpoint_time = checkpoint.timestamp
+        self._cleanup_old_checkpoints(keep=10)
+
+        return checkpoint_file
+
+    def load_latest_checkpoint(self) -> Optional[SimulationCheckpoint]:
+        """Load most recent checkpoint."""
+        checkpoints = sorted(self.checkpoint_path.glob("checkpoint_*.json"))
+        if not checkpoints:
+            return None
+
+        latest = checkpoints[-1]
+        with open(latest, "r") as f:
+            data = json.load(f)
+
+        return SimulationCheckpoint(**data)
+
+    def _cleanup_old_checkpoints(self, keep: int = 10):
+        """Delete old checkpoints, keeping N most recent."""
+        checkpoints = sorted(self.checkpoint_path.glob("checkpoint_*.json"))
+        for old_checkpoint in checkpoints[:-keep]:
+            try:
+                old_checkpoint.unlink()
+            except Exception:
+                pass
+
+
 class SimulationOrchestrator:
     """
     Main simulation coordinator.
 
     Manages:
     - Time advancement via OfferScheduler
-    - Agent execution via LangGraph
+    - Agent execution via LangGraph (concurrent via asyncio.gather)
     - Statistics tracking
     - Rich terminal dashboard
+    - Database connection pooling (50 base + 10 overflow)
+    - Checkpointing for resumability (every 5 min)
+    - Adaptive concurrency based on system load
     """
 
     def __init__(
@@ -122,6 +198,9 @@ class SimulationOrchestrator:
         default_store_id: Optional[str] = None,
         process_all_agents: bool = True,
         debug_mode: bool = False,
+        max_concurrent: int = 50,
+        checkpoint_interval_seconds: int = 300,
+        adaptive_concurrency: bool = True,
     ):
         """
         Initialize orchestrator.
@@ -133,12 +212,18 @@ class SimulationOrchestrator:
             default_store_id: Default store for shopping sessions
             process_all_agents: If True, scheduler processes all agents. If False, only processes filtered agents
             debug_mode: Enable debug logging in dashboard
+            max_concurrent: Maximum number of agents to run concurrently (default: 50)
+            checkpoint_interval_seconds: Checkpoint interval in seconds (default: 300 = 5 min)
+            adaptive_concurrency: Enable adaptive concurrency based on system load (default: True)
         """
         self.db = db
         self.time_scale = time_scale
         self.default_store_id = default_store_id or self._get_default_store()
         self.process_all_agents = process_all_agents
         self.debug_mode = debug_mode
+        self.max_concurrent = max_concurrent
+        self.checkpoint_interval_seconds = checkpoint_interval_seconds
+        self.adaptive_concurrency = adaptive_concurrency
 
         # Reset offer engine singletons for fresh initialization
         logger.info("Resetting offer engine singletons...")
@@ -190,6 +275,15 @@ class SimulationOrchestrator:
         if debug_mode:
             self._setup_debug_logging()
 
+        # Checkpoint manager
+        self.checkpoint_manager = CheckpointManager(
+            checkpoint_interval_seconds=checkpoint_interval_seconds
+        )
+
+        # Performance tracking
+        self.agent_latencies: List[float] = []
+        self.cycle_start_time: float = 0
+
     def _setup_debug_logging(self):
         """Setup debug logging to capture to buffer."""
         self.log_buffer.setLevel(logging.DEBUG)
@@ -220,6 +314,7 @@ class SimulationOrchestrator:
         agent_ids: Optional[List[str]] = None,
         show_dashboard: bool = True,
         start_date: Optional[date] = None,
+        resume_from_checkpoint: bool = False,
     ) -> SimulationStats:
         """
         Run simulation for specified duration.
@@ -229,6 +324,7 @@ class SimulationOrchestrator:
             agent_ids: Specific agent IDs to run, or None for all active
             show_dashboard: Show Rich terminal dashboard
             start_date: Simulated calendar start date (default: 2024-01-01)
+            resume_from_checkpoint: Resume from latest checkpoint (default: False)
 
         Returns:
             Final SimulationStats
@@ -283,7 +379,11 @@ class SimulationOrchestrator:
                 self._setup_signal_handlers()
                 try:
                     await self._run_loop(
-                        agents, target_end_time, advance_interval_seconds, live
+                        agents,
+                        target_end_time,
+                        advance_interval_seconds,
+                        live,
+                        resume_from_checkpoint,
                     )
                 finally:
                     self._cleanup_signal_handlers()
@@ -291,7 +391,11 @@ class SimulationOrchestrator:
             self._setup_signal_handlers()
             try:
                 await self._run_loop(
-                    agents, target_end_time, advance_interval_seconds, None
+                    agents,
+                    target_end_time,
+                    advance_interval_seconds,
+                    None,
+                    resume_from_checkpoint,
                 )
             finally:
                 self._cleanup_signal_handlers()
@@ -334,11 +438,43 @@ class SimulationOrchestrator:
         target_end_time: float,
         interval_seconds: float,
         live: Optional[Live],
+        resume_from_checkpoint: bool = False,
     ):
         """Main simulation loop."""
+        # Check for existing checkpoint
+        if resume_from_checkpoint:
+            if checkpoint := self.checkpoint_manager.load_latest_checkpoint():
+                self.console.print(
+                    f"[yellow]Resuming from checkpoint at cycle {checkpoint.cycle}[/yellow]"
+                )
+                self.stats.cycles_completed = checkpoint.cycle
+                self.stats.simulated_datetime = (
+                    datetime.fromisoformat(checkpoint.simulated_datetime)
+                    if checkpoint.simulated_datetime
+                    else None
+                )
+            else:
+                self.console.print(
+                    "[yellow]No checkpoint found, starting fresh[/yellow]"
+                )
+
         while time.time() < target_end_time and not self._stop_requested:
+            current_time = time.time()
+            self.cycle_start_time = current_time
+
             try:
-                await self._run_cycle(agents)
+                # Use concurrent execution if max_concurrent > 1
+                if self.max_concurrent > 1:
+                    await self._run_cycle_concurrent(agents)
+                else:
+                    await self._run_cycle(agents)
+
+                # Track cycle time
+                cycle_time = time.time() - self.cycle_start_time
+                logger.debug(
+                    f"Cycle {self.stats.cycles_completed} completed in {cycle_time:.2f}s"
+                )
+
             except Exception as e:
                 error_msg = f"Cycle error: {str(e)}\n{traceback.format_exc()}"
                 logger.error(error_msg)
@@ -346,8 +482,28 @@ class SimulationOrchestrator:
                 self.stats.errors += 1
                 self.stats.last_error = f"Cycle: {str(e)}"[:100]
 
+                # Save emergency checkpoint on error
+                try:
+                    self._save_checkpoint(agents, is_emergency=True)
+                except Exception as checkpoint_err:
+                    logger.error(
+                        f"Failed to save emergency checkpoint: {checkpoint_err}"
+                    )
+
+                raise
+
             # Commit after each cycle
             self.db.commit()
+
+            # Checkpoint if needed
+            if self.checkpoint_manager.should_checkpoint(current_time):
+                try:
+                    checkpoint_file = self._save_checkpoint(agents)
+                    self.console.print(
+                        f"[green]Checkpoint saved: {checkpoint_file.name}[/green]"
+                    )
+                except Exception as checkpoint_err:
+                    logger.error(f"Failed to save checkpoint: {checkpoint_err}")
 
             # Update dashboard
             if live:
@@ -416,6 +572,135 @@ class SimulationOrchestrator:
             f"checkouts={self.stats.checkouts_completed}"
         )
 
+    async def _run_cycle_concurrent(self, agents: List[Dict[str, Any]]):
+        """
+        Execute agents concurrently with limited concurrency.
+
+        Args:
+            agents: List of agent dictionaries
+        """
+        # Determine concurrency level (adaptive if enabled)
+        max_concurrent = self._get_adaptive_concurrency()
+
+        # Create semaphore to limit concurrent operations
+        semaphore = asyncio.Semaphore(max_concurrent)
+
+        async def run_agent_with_semaphore(agent: Dict[str, Any]):
+            """Run single agent with semaphore and latency tracking."""
+            async with semaphore:
+                agent_start = time.time()
+                try:
+                    sim_date = (
+                        self.stats.simulated_datetime.date()
+                        if self.stats.simulated_datetime
+                        else date.today()
+                    )
+                    result = await self._run_agent(agent, sim_date)
+                    latency = time.time() - agent_start
+                    self.agent_latencies.append(latency)
+                    return agent, result, None
+                except Exception as e:
+                    latency = time.time() - agent_start
+                    self.agent_latencies.append(latency)
+                    return agent, None, e
+
+        # Execute all agents concurrently (up to max_concurrent at once)
+        tasks = [run_agent_with_semaphore(agent) for agent in agents]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Process results
+        for item in results:
+            # Handle exceptions from asyncio.gather (not our wrapped exceptions)
+            if not isinstance(item, tuple):
+                logger.error(f"Unexpected result type: {type(item)}")
+                self.stats.errors += 1
+                continue
+
+            # Unpack the result tuple (agent, result, error)
+            agent, result, error = item
+
+            self.stats.agents_processed += 1
+
+            if error:
+                agent_id = agent.get("agent_id", "unknown")
+                error_msg = f"Agent {agent_id} error: {str(error)}"
+                logger.error(error_msg)
+                self._log_error_to_file(f"{error_msg}\n{traceback.format_exc()}")
+                self.stats.errors += 1
+                self.stats.last_error = f"Agent {agent_id[:15]}: {str(error)}"[:100]
+            elif result and result.get("should_shop"):
+                self.stats.agents_shopped += 1
+                self.stats.sessions_created += 1
+                self.stats.events_created += result.get("events_created", 0)
+
+                if result.get("checkout_decision") == "complete":
+                    self.stats.checkouts_completed += 1
+                elif result.get("checkout_decision") == "abandon":
+                    self.stats.checkouts_abandoned += 1
+
+        # Clear latency tracking for next cycle
+        self.agent_latencies.clear()
+
+    def _get_adaptive_concurrency(self) -> int:
+        """
+        Get current concurrency based on system load.
+
+        Returns:
+            Concurrency level between min and max bounds
+        """
+        if not self.adaptive_concurrency:
+            return self.max_concurrent
+
+        try:
+            import psutil
+
+            cpu_percent = psutil.cpu_percent(interval=0.1)
+            mem_percent = psutil.virtual_memory().percent
+
+            min_concurrency = max(20, self.max_concurrent // 2)
+            max_allowed = min(100, self.max_concurrent * 2)
+
+            # Reduce concurrency if high load
+            if cpu_percent > 80 or mem_percent > 80:
+                return max(min_concurrency, self.max_concurrent // 2)
+
+            # Increase concurrency if low load
+            if cpu_percent < 50 and mem_percent < 50:
+                return min(max_allowed, self.max_concurrent)
+
+            return self.max_concurrent
+        except Exception:
+            # Fallback if psutil not available
+            return self.max_concurrent
+
+    def _save_checkpoint(
+        self, agents: List[Dict[str, Any]], is_emergency: bool = False
+    ) -> Path:
+        """
+        Save current simulation state to checkpoint.
+
+        Args:
+            agents: List of all agents
+            is_emergency: If True, this is an emergency checkpoint
+
+        Returns:
+            Path to checkpoint file
+        """
+        checkpoint = SimulationCheckpoint(
+            timestamp=time.time(),
+            cycle=self.stats.cycles_completed,
+            agents_completed=[a.get("agent_id", "unknown") for a in agents[:100]],
+            agents_in_progress=[],
+            stats=self.stats.to_dict(),
+            simulated_datetime=(
+                self.stats.simulated_datetime.isoformat()
+                if self.stats.simulated_datetime
+                else None
+            ),
+        )
+
+        return self.checkpoint_manager.save_checkpoint(checkpoint)
+
     async def _run_agent(self, agent: Dict[str, Any], sim_date: date) -> Dict[str, Any]:
         """
         Run a single agent through the shopping graph.
@@ -460,11 +745,11 @@ class SimulationOrchestrator:
             """
             result = self.db.execute(text(query), params)
         else:
+            # Remove LIMIT to allow loading all 372 agents
             result = self.db.execute(
                 text("""
                 SELECT * FROM agents
                 WHERE is_active = true
-                LIMIT 100
             """)
             )
 
@@ -474,7 +759,7 @@ class SimulationOrchestrator:
 
         # Log what we found
         loaded_ids = [a.get("agent_id", "unknown") for a in agents]
-        logger.info(f"Loaded {len(agents)} agents: {loaded_ids}")
+        logger.info(f"Loaded {len(agents)} agents")
 
         if agent_ids and len(agents) < len(agent_ids):
             missing = set(agent_ids) - set(loaded_ids)
@@ -610,6 +895,10 @@ async def run_simulation(
     process_all_agents: bool = False,
     debug_mode: bool = False,
     log_file: Optional[str] = None,
+    max_concurrent: int = 50,
+    checkpoint_interval: int = 300,
+    adaptive_concurrency: bool = True,
+    resume_from_checkpoint: bool = False,
 ) -> SimulationStats:
     """
     Convenience function to run simulation.
@@ -623,6 +912,10 @@ async def run_simulation(
         process_all_agents: If True, scheduler processes all agents. If False, only processes filtered agents
         debug_mode: Enable debug logging in dashboard
         log_file: Optional file to write logs to
+        max_concurrent: Max concurrent agents (default: 50)
+        checkpoint_interval: Checkpoint interval in seconds (default: 300 = 5 min)
+        adaptive_concurrency: Enable adaptive concurrency (default: True)
+        resume_from_checkpoint: Resume from latest checkpoint (default: False)
 
     Returns:
         Final SimulationStats
@@ -663,8 +956,17 @@ async def run_simulation(
     if db_url.startswith("postgres://"):
         db_url = db_url.replace("postgres://", "postgresql://", 1)
 
-    # Create engine and session
-    engine = create_engine(db_url)
+    # Create engine with optimized connection pool for high concurrency
+    engine = create_engine(
+        db_url,
+        pool_size=50,
+        max_overflow=10,
+        pool_pre_ping=True,
+        pool_recycle=3600,
+        pool_timeout=30,
+        pool_use_lifo=True,
+        echo=False,
+    )
     Session = sessionmaker(bind=engine)
     db = Session()
 
@@ -674,6 +976,9 @@ async def run_simulation(
             time_scale=time_scale,
             process_all_agents=process_all_agents,
             debug_mode=debug_mode,
+            max_concurrent=max_concurrent,
+            checkpoint_interval_seconds=checkpoint_interval,
+            adaptive_concurrency=adaptive_concurrency,
         )
         # Parse start_date string to date object
         parsed_start_date = None
@@ -685,6 +990,7 @@ async def run_simulation(
             agent_ids=agent_ids,
             show_dashboard=show_dashboard,
             start_date=parsed_start_date,
+            resume_from_checkpoint=resume_from_checkpoint,
         )
     finally:
         db.close()
@@ -746,6 +1052,28 @@ Examples:
         default=None,
         help="Write all logs to specified file (e.g., simulation.log)",
     )
+    parser.add_argument(
+        "--max-concurrent",
+        type=int,
+        default=50,
+        help="Max concurrent agents (default: 50, range: 1-100)",
+    )
+    parser.add_argument(
+        "--checkpoint-interval",
+        type=int,
+        default=300,
+        help="Checkpoint interval in seconds (default: 300 = 5 min)",
+    )
+    parser.add_argument(
+        "--no-adaptive",
+        action="store_true",
+        help="Disable adaptive concurrency (default: enabled)",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume from latest checkpoint",
+    )
 
     args = parser.parse_args()
 
@@ -760,5 +1088,9 @@ Examples:
             process_all_agents=args.process_all_agents,
             debug_mode=args.debug,
             log_file=args.log_file,
+            max_concurrent=args.max_concurrent,
+            checkpoint_interval=args.checkpoint_interval,
+            adaptive_concurrency=not args.no_adaptive,
+            resume_from_checkpoint=args.resume,
         )
     )

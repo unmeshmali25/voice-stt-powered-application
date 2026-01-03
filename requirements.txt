@@ -41,3 +41,4 @@ rich>=13.0.0            # CLI dashboard
 click>=8.0.0            # CLI framework
 aiohttp>=3.9.0          # Async HTTP for LLM APIs
 anthropic>=0.40.0       # Claude API support
+psutil>=5.9.0           # System monitoring for adaptive concurrency
