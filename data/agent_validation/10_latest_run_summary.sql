@@ -8,6 +8,7 @@ WITH latest_run AS (
     SELECT
         MAX(started_at) as latest_start
     FROM shopping_sessions
+    WHERE is_simulated = true
 ),
 time_window AS (
     SELECT
