@@ -320,6 +320,7 @@ class SimulationOrchestrator:
         self,
         duration_hours: float,
         agent_ids: Optional[List[str]] = None,
+        num_agents: Optional[int] = None,
         show_dashboard: bool = True,
         start_date: Optional[date] = None,
     ) -> SimulationStats:
@@ -329,6 +330,7 @@ class SimulationOrchestrator:
         Args:
             duration_hours: Real-time hours to run
             agent_ids: Specific agent IDs to run, or None for all active
+            num_agents: Number of agents to randomly select (overrides agent_ids if specified)
             show_dashboard: Show Rich terminal dashboard
             start_date: Simulated calendar start date (default: 2024-01-01)
 
@@ -341,7 +343,7 @@ class SimulationOrchestrator:
         self.agent_ids = agent_ids
 
         # Load agents
-        agents = self._load_agents(agent_ids)
+        agents = self._load_agents(agent_ids, num_agents)
         logger.info(f"Loaded {len(agents)} agents")
 
         if not agents:
@@ -662,10 +664,30 @@ class SimulationOrchestrator:
         return final_state
 
     def _load_agents(
-        self, agent_ids: Optional[List[str]] = None
+        self, agent_ids: Optional[List[str]] = None, num_agents: Optional[int] = None
     ) -> List[Dict[str, Any]]:
-        """Load agents from database."""
-        if agent_ids:
+        """Load agents from database.
+
+        Args:
+            agent_ids: Specific agent IDs to load
+            num_agents: Number of agents to randomly select (overrides agent_ids if specified)
+
+        Returns:
+            List of agent dictionaries
+        """
+        # If num_agents is specified, load random agents
+        if num_agents is not None:
+            logger.info(f"Loading {num_agents} random agents")
+            result = self.db.execute(
+                text("""
+                SELECT * FROM agents
+                WHERE is_active = true
+                ORDER BY RANDOM()
+                LIMIT :limit
+            """),
+                {"limit": num_agents}
+            )
+        elif agent_ids:
             logger.info(f"Loading specific agents: {agent_ids}")
             # Use IN clause with proper parameter binding for multiple IDs
             # Build parameterized query for variable number of IDs
@@ -860,6 +882,7 @@ async def run_simulation(
     duration_hours: float = 6.0,
     time_scale: float = 24.0,
     agent_ids: Optional[List[str]] = None,
+    num_agents: Optional[int] = None,
     show_dashboard: bool = True,
     start_date: Optional[str] = None,
     process_all_agents: bool = False,
@@ -880,6 +903,7 @@ async def run_simulation(
         duration_hours: Real hours to run
         time_scale: Time compression (24 = 1h real = 1 day simulated)
         agent_ids: Specific agents or None for all
+        num_agents: Number of agents to randomly select (overrides agent_ids if both specified)
         show_dashboard: Show Rich dashboard
         start_date: Simulated start date as ISO string (YYYY-MM-DD)
         process_all_agents: If True, scheduler processes all agents. If False, only processes filtered agents
@@ -971,6 +995,7 @@ async def run_simulation(
         return await orchestrator.run(
             duration_hours=duration_hours,
             agent_ids=agent_ids,
+            num_agents=num_agents,
             show_dashboard=show_dashboard,
             start_date=parsed_start_date,
         )
@@ -1026,6 +1051,12 @@ Examples:
     )
     parser.add_argument(
         "--agents", nargs="*", help="Specific agent IDs (e.g., agent_001 agent_002)"
+    )
+    parser.add_argument(
+        "--num-agents",
+        type=int,
+        default=None,
+        help="Number of agents to randomly select (e.g., 50). Overrides --agents if both specified.",
     )
     parser.add_argument(
         "--no-dashboard", action="store_true", help="Disable Rich dashboard"
@@ -1095,6 +1126,7 @@ Examples:
             duration_hours=args.hours,
             time_scale=args.time_scale,
             agent_ids=args.agents,
+            num_agents=args.num_agents,
             show_dashboard=not args.no_dashboard,
             start_date=args.start_date,
             process_all_agents=args.process_all_agents,

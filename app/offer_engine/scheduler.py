@@ -5,6 +5,7 @@ Orchestrates offer refresh operations.
 """
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import List, Optional
@@ -337,18 +338,36 @@ class OfferScheduler:
 
         logger.info(f"Found {len(users)} agents needing initial offer assignment")
 
-        # Assign offers to each agent
+        # Assign offers to each agent in parallel
         total_offers_assigned = 0
         initialized_count = 0
 
-        for user_id in users:
-            result = self._perform_refresh(user_id)
-            if result.refreshed:
-                initialized_count += 1
-                total_offers_assigned += result.assigned_count
-                logger.info(f"  Initialized agent {user_id[:8]}...: {result.assigned_count} offers")
-            else:
-                logger.warning(f"  Failed to initialize agent {user_id[:8]}...: {result.reason}")
+        # Use ThreadPoolExecutor for parallel initialization
+        # Pool size of 20 workers for good parallelism without overwhelming the database
+        max_workers = min(20, len(users))
+        logger.info(f"Using {max_workers} parallel workers for initialization")
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all tasks
+            future_to_user = {
+                executor.submit(self._perform_refresh, user_id): user_id
+                for user_id in users
+            }
+
+            # Process results as they complete
+            for future in as_completed(future_to_user):
+                user_id = future_to_user[future]
+                try:
+                    result = future.result()
+                    if result.refreshed:
+                        initialized_count += 1
+                        total_offers_assigned += result.assigned_count
+                        if initialized_count % 10 == 0:
+                            logger.info(f"  Progress: {initialized_count}/{len(users)} agents initialized")
+                    else:
+                        logger.warning(f"  Failed to initialize agent {user_id[:8]}...: {result.reason}")
+                except Exception as e:
+                    logger.error(f"  Exception initializing agent {user_id[:8]}...: {e}")
 
         logger.info("="*60)
         logger.info(f"INITIALIZATION COMPLETE: {initialized_count} agents, {total_offers_assigned} offers assigned")
