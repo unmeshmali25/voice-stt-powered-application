@@ -922,7 +922,9 @@ async def run_simulation(
     """
     from dotenv import load_dotenv
 
-    load_dotenv()
+    # Load from .env.production if it exists, otherwise try .env
+    env_file = ".env.production" if os.path.exists(".env.production") else ".env"
+    load_dotenv(env_file)
 
     # Setup logging
     log_level = logging.DEBUG if debug_mode else logging.INFO
@@ -953,6 +955,12 @@ async def run_simulation(
 
     # Get database URL
     db_url = os.getenv("DATABASE_URL", "")
+    if not db_url:
+        raise ValueError(
+            "DATABASE_URL environment variable not set. "
+            "Please set DATABASE_URL in your .env file or environment."
+        )
+
     if db_url.startswith("postgres://"):
         db_url = db_url.replace("postgres://", "postgresql://", 1)
 

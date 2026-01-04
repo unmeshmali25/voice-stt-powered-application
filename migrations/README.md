@@ -45,6 +45,17 @@ psql -h localhost -U postgres -d voiceoffers -f migrations/postgres_schema.sql
 psql -h localhost -U postgres -d voiceoffers -f migrations/seed_dev.sql
 ```
 
+## Querying Database
+
+```bash
+# Using supadb (recommended - requires setup in ~/.zshrc)
+supadb -c "SQL"     # Quick query
+supadb -f FILE.sql  # Run file
+
+# Using psql
+psql [connection_string] -c "SQL"
+psql [connection_string] -f FILE.sql
+```
 ## Schema Version
 
 Current version: **v1.0** (Initial release)

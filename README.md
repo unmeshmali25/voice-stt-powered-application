@@ -188,3 +188,16 @@ Our database design follows strict relational principles to ensure data integrit
 4.  **Run**:
     *   Backend: `python -m app.main`
     *   Frontend: `npm run dev`
+
+## Database Querying
+
+```bash
+# Add to ~/.zshrc
+supadb() {
+  psql "postgresql://[user]:[password]@[host]:[port]/[dbname]" "$@"
+}
+
+# Usage
+supadb -c "SELECT count(*) FROM agents"
+supadb -f migrations/seed_dev.sql
+```
