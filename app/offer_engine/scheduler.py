@@ -7,7 +7,7 @@ Orchestrates offer refresh operations.
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -300,7 +300,8 @@ class OfferScheduler:
     def initialize_all_agents(
         self,
         agent_ids: Optional[List[str]] = None,
-        process_all: bool = True
+        process_all: bool = True,
+        should_stop_check: Optional[Callable[[], bool]] = None
     ) -> AdvanceResult:
         """
         Initialize all agents with offers before simulation begins.
@@ -311,6 +312,7 @@ class OfferScheduler:
         Args:
             agent_ids: Optional list of agent IDs to filter
             process_all: If True, process all agents. If False, only process filtered agents
+            should_stop_check: Optional callback function that returns True if initialization should stop
 
         Returns:
             AdvanceResult with initialization statistics
@@ -344,6 +346,11 @@ class OfferScheduler:
         initialized_count = 0
 
         for i, user_id in enumerate(users, 1):
+            # Check if we should stop (Ctrl+C pressed)
+            if should_stop_check and should_stop_check():
+                logger.warning(f"  Initialization aborted after {i-1}/{len(users)} agents")
+                break
+
             result = self._perform_refresh(user_id)
             if result.refreshed:
                 initialized_count += 1

@@ -300,9 +300,9 @@ class SimulationOrchestrator:
         self.console.print("[red bold]=" * 60 + "\n")
 
     def request_stop(self):
-        """Request graceful stop of simulation."""
+        """Request immediate stop of simulation."""
         self._stop_requested = True
-        logger.info("Stop requested, will complete current cycle...")
+        logger.info("Stop requested, aborting current operation...")
 
     def _clear_error_log(self):
         """Clear or create error log file with header."""
@@ -383,10 +383,17 @@ class SimulationOrchestrator:
             logger.info("=" * 80)
 
             try:
+                # Pass a lambda to check stop status
                 init_result = self.scheduler.initialize_all_agents(
                     agent_ids=self.agent_ids,
-                    process_all=self.process_all_agents
+                    process_all=self.process_all_agents,
+                    should_stop_check=lambda: self._stop_requested
                 )
+
+                # Check if initialization was aborted
+                if self._stop_requested:
+                    logger.warning("Initialization aborted by user")
+                    return self.stats
 
                 # Update stats with initialization results
                 self.stats.offers_assigned += init_result.offers_assigned
@@ -459,10 +466,10 @@ class SimulationOrchestrator:
         def handle_interrupt(signum, frame):
             """Handle Ctrl+C and Ctrl+Z."""
             if signum == signal.SIGINT:
-                self.console.print("\n[yellow]Stopping simulation...[/yellow]")
+                self.console.print("\n[yellow]⚠ Ctrl+C detected - Stopping simulation immediately...[/yellow]")
                 self.request_stop()
             elif signum == signal.SIGTSTP:
-                self.console.print("\n[yellow]Pausing simulation (Ctrl+Z)[/yellow]")
+                self.console.print("\n[yellow]⚠ Ctrl+Z detected - Stopping simulation immediately...[/yellow]")
                 self.request_stop()
 
         signal.signal(signal.SIGINT, handle_interrupt)
@@ -546,6 +553,11 @@ class SimulationOrchestrator:
 
     async def _run_cycle(self, agents: List[Dict[str, Any]]):
         """Execute one simulation cycle."""
+        # Check for stop request before starting cycle
+        if self._stop_requested:
+            logger.info("Stop requested, aborting cycle")
+            return
+
         # 1. Process offers/agents for this cycle
         # Note: Wall clock time + time_scale multiplication in now() handles time advancement.
         # Each cycle sleeps for 3600/time_scale seconds, which naturally advances
@@ -567,6 +579,11 @@ class SimulationOrchestrator:
         # Handle case where sim_datetime might be None
         if sim_datetime is None:
             logger.warning("No simulated datetime available, skipping agent processing")
+            return
+
+        # Check for stop request before processing agents
+        if self._stop_requested:
+            logger.info("Stop requested, skipping agent processing")
             return
 
         # 3. Process agents (parallel or sequential)
@@ -603,6 +620,11 @@ class SimulationOrchestrator:
         else:
             # SEQUENTIAL EXECUTION (legacy mode)
             for agent in agents:
+                # Check for stop request on every agent (immediate abort)
+                if self._stop_requested:
+                    logger.info(f"Stop requested, aborting cycle after {self.stats.agents_processed} agents")
+                    return
+
                 self.stats.agents_processed += 1
 
                 try:
