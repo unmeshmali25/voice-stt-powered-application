@@ -5,6 +5,9 @@ This module provides:
 - SimulationOrchestrator: Main coordinator class
 - Rich terminal dashboard for monitoring
 - Integration with LangGraph agents and offer engine
+- Parallel agent execution for 372+ agents
+- Checkpoint/resume for crash recovery
+- Rate limiting for API protection
 """
 
 import asyncio
@@ -16,6 +19,7 @@ import signal
 import traceback
 from dataclasses import dataclass, field
 from datetime import datetime, date, timedelta
+from pathlib import Path
 from typing import List, Dict, Any, Optional
 from io import StringIO
 
@@ -33,6 +37,12 @@ from app.offer_engine import get_scheduler, get_config, reset_singletons
 from app.simulation.agent.state import AgentState, create_initial_state
 from app.simulation.agent.actions import set_actions, get_actions
 from app.simulation.agent.shopping_graph import get_shopping_graph
+
+# Scaling components
+from app.simulation.rate_limiter import get_rate_limiter, get_rate_limiter_metrics
+from app.simulation.parallel_executor import ParallelAgentExecutor, WarmupController
+from app.simulation.checkpoint import CheckpointManager
+from app.simulation.monitoring import LatencyTracker, MemoryMonitor, CircuitBreaker
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +132,12 @@ class SimulationOrchestrator:
         default_store_id: Optional[str] = None,
         process_all_agents: bool = True,
         debug_mode: bool = False,
+        # Scaling parameters
+        rate_limit_rps: int = 50,
+        checkpoint_interval: int = 10,
+        warmup_cycles: int = 0,
+        parallel_mode: bool = True,
+        db_url: Optional[str] = None,
     ):
         """
         Initialize orchestrator.
@@ -133,12 +149,26 @@ class SimulationOrchestrator:
             default_store_id: Default store for shopping sessions
             process_all_agents: If True, scheduler processes all agents. If False, only processes filtered agents
             debug_mode: Enable debug logging in dashboard
+            rate_limit_rps: API rate limit in requests per second
+            checkpoint_interval: Cycles between checkpoint saves (0 to disable)
+            warmup_cycles: Number of cycles to gradually ramp up agents (0 to disable)
+            parallel_mode: Enable parallel agent execution (vs sequential)
+            db_url: Database URL for parallel executor (uses env if None)
         """
         self.db = db
         self.time_scale = time_scale
         self.default_store_id = default_store_id or self._get_default_store()
         self.process_all_agents = process_all_agents
         self.debug_mode = debug_mode
+        self.parallel_mode = parallel_mode
+        self.rate_limit_rps = rate_limit_rps
+        self.checkpoint_interval = checkpoint_interval
+        self.warmup_cycles = warmup_cycles
+
+        # Store db_url for parallel executor
+        self._db_url = db_url or os.getenv("DATABASE_URL", "")
+        if self._db_url.startswith("postgres://"):
+            self._db_url = self._db_url.replace("postgres://", "postgresql://", 1)
 
         # Reset offer engine singletons for fresh initialization
         logger.info("Resetting offer engine singletons...")
@@ -163,7 +193,7 @@ class SimulationOrchestrator:
             f"time_service.config.time_scale: {self.scheduler.time_service.config.time_scale}"
         )
 
-        # Initialize actions
+        # Initialize actions (for sequential mode)
         set_actions(db)
 
         # Get shopping graph
@@ -177,6 +207,7 @@ class SimulationOrchestrator:
 
         # Control flag
         self._stop_requested = False
+        self._paused = False
 
         # Agent filtering
         self.agent_ids: Optional[List[str]] = None
@@ -190,6 +221,37 @@ class SimulationOrchestrator:
         if debug_mode:
             self._setup_debug_logging()
 
+        # === Scaling Components ===
+
+        # Rate limiter
+        self.rate_limiter = get_rate_limiter(
+            name="railway_api",
+            capacity=rate_limit_rps,
+            refill_rate=float(rate_limit_rps),
+        )
+        logger.info(f"Rate limiter initialized: {rate_limit_rps} req/s")
+
+        # Latency tracker
+        self.latency_tracker = LatencyTracker(window_size=1000)
+
+        # Memory monitor
+        self.memory_monitor = MemoryMonitor(warning_threshold_mb=12000)
+
+        # Circuit breaker (initialized later when we know agent count)
+        self.circuit_breaker: Optional[CircuitBreaker] = None
+
+        # Checkpoint manager
+        self.checkpoint_manager = CheckpointManager(
+            checkpoint_dir=Path("./data/checkpoints"),
+            save_interval_cycles=checkpoint_interval,
+        ) if checkpoint_interval > 0 else None
+
+        # Parallel executor (initialized later when we know db_url)
+        self.parallel_executor: Optional[ParallelAgentExecutor] = None
+
+        # Warmup controller (initialized later when we know agent count)
+        self.warmup_controller: Optional[WarmupController] = None
+
     def _setup_debug_logging(self):
         """Setup debug logging to capture to buffer."""
         self.log_buffer.setLevel(logging.DEBUG)
@@ -197,10 +259,50 @@ class SimulationOrchestrator:
         self.log_buffer.setFormatter(formatter)
         logging.getLogger().addHandler(self.log_buffer)
 
+    def _initialize_scaling_components(self, agent_count: int):
+        """Initialize scaling components that depend on agent count."""
+        # Circuit breaker
+        self.circuit_breaker = CircuitBreaker(
+            total_agents=agent_count,
+            on_open_callback=self._on_circuit_open,
+        )
+        logger.info(f"Circuit breaker initialized: threshold={self.circuit_breaker.failure_threshold}")
+
+        # Warmup controller
+        if self.warmup_cycles > 0:
+            self.warmup_controller = WarmupController(
+                total_agents=agent_count,
+                warmup_cycles=self.warmup_cycles,
+            )
+            logger.info(f"Warmup controller initialized: {self.warmup_cycles} cycles")
+
+        # Parallel executor (only if parallel mode enabled)
+        if self.parallel_mode and self._db_url:
+            self.parallel_executor = ParallelAgentExecutor(
+                db_url=self._db_url,
+                rate_limiter=self.rate_limiter,
+                latency_tracker=self.latency_tracker,
+                circuit_breaker=self.circuit_breaker,
+                max_workers=12,
+                pool_size=50,
+                max_overflow=75,
+            )
+            logger.info("Parallel executor initialized")
+
+    async def _on_circuit_open(self, circuit_breaker: CircuitBreaker):
+        """Handle circuit breaker opening."""
+        self._paused = True
+        self.console.print("\n[red bold]=" * 60)
+        self.console.print("[red bold]CIRCUIT BREAKER OPEN - Simulation PAUSED")
+        self.console.print(f"[red]Failures this cycle: {circuit_breaker.cycle_failures}")
+        self.console.print(f"[red]Threshold: {circuit_breaker.failure_threshold} (5%)")
+        self.console.print("[yellow]Press 'r' to resume after investigating the issue")
+        self.console.print("[red bold]=" * 60 + "\n")
+
     def request_stop(self):
-        """Request graceful stop of simulation."""
+        """Request immediate stop of simulation."""
         self._stop_requested = True
-        logger.info("Stop requested, will complete current cycle...")
+        logger.info("Stop requested, aborting current operation...")
 
     def _clear_error_log(self):
         """Clear or create error log file with header."""
@@ -218,6 +320,7 @@ class SimulationOrchestrator:
         self,
         duration_hours: float,
         agent_ids: Optional[List[str]] = None,
+        num_agents: Optional[int] = None,
         show_dashboard: bool = True,
         start_date: Optional[date] = None,
     ) -> SimulationStats:
@@ -227,6 +330,7 @@ class SimulationOrchestrator:
         Args:
             duration_hours: Real-time hours to run
             agent_ids: Specific agent IDs to run, or None for all active
+            num_agents: Number of agents to randomly select (overrides agent_ids if specified)
             show_dashboard: Show Rich terminal dashboard
             start_date: Simulated calendar start date (default: 2024-01-01)
 
@@ -235,16 +339,27 @@ class SimulationOrchestrator:
         """
         logger.info(f"Starting simulation: {duration_hours}h at {self.time_scale}x")
 
-        # Store agent IDs for scheduler filtering
-        self.agent_ids = agent_ids
-
         # Load agents
-        agents = self._load_agents(agent_ids)
+        agents = self._load_agents(agent_ids, num_agents)
         logger.info(f"Loaded {len(agents)} agents")
 
         if not agents:
             logger.error("No agents found!")
             return self.stats
+
+        # Extract agent IDs from loaded agents for scheduler filtering
+        # This ensures when using --num-agents, only those agents get offers
+        loaded_agent_ids = [a.get('agent_id') for a in agents]
+        self.agent_ids = loaded_agent_ids
+        logger.info(f"Agent filtering configured:")
+        logger.info(f"  - Loaded agents: {len(agents)}")
+        logger.info(f"  - Agent IDs for scheduler: {len(self.agent_ids)}")
+        logger.info(f"  - Process all agents flag: {self.process_all_agents}")
+        if not self.process_all_agents:
+            logger.info(f"  ✓ Only these {len(self.agent_ids)} agents will receive offers")
+
+        # Initialize scaling components that depend on agent count
+        self._initialize_scaling_components(len(agents))
 
         # Ensure simulation is started
         is_active = self.scheduler.time_service.is_simulation_active()
@@ -262,10 +377,57 @@ class SimulationOrchestrator:
             logger.info(
                 f"Simulation started. Active: {self.scheduler.time_service.is_simulation_active()}"
             )
+            should_initialize = True  # Track if this is a fresh start (for initialization)
         else:
             logger.warning(
                 "Simulation already active, skipping start_simulation() call"
             )
+            should_initialize = False  # Skip initialization on resume
+
+        # Initialize all agents with offers BEFORE first cycle
+        if should_initialize:
+            logger.info("=" * 80)
+            logger.info("STEP 1: Initializing agents with offers...")
+            logger.info("=" * 80)
+
+            try:
+                # Pass a lambda to check stop status
+                init_result = self.scheduler.initialize_all_agents(
+                    agent_ids=self.agent_ids,
+                    process_all=self.process_all_agents,
+                    should_stop_check=lambda: self._stop_requested
+                )
+
+                # Check if initialization was aborted
+                if self._stop_requested:
+                    logger.warning("Initialization aborted by user")
+                    return self.stats
+
+                # Update stats with initialization results
+                self.stats.offers_assigned += init_result.offers_assigned
+
+                logger.info(
+                    f"Initialization complete: {init_result.users_refreshed} agents initialized, "
+                    f"{init_result.offers_assigned} offers assigned"
+                )
+
+                if init_result.offers_assigned == 0:
+                    logger.error(
+                        "WARNING: No offers were assigned during initialization! "
+                        "This may indicate a problem with the coupon pool or database state."
+                    )
+
+            except Exception as e:
+                logger.error(f"Failed to initialize agents: {e}")
+                import traceback
+                traceback.print_exc()
+                # Continue anyway - the refresh logic will catch them later
+
+            logger.info("=" * 80)
+            logger.info("STEP 2: Starting simulation cycles...")
+            logger.info("=" * 80)
+        else:
+            logger.info("Skipping initialization (resuming existing simulation)")
 
         # Calculate timing
         # Each cycle advances 1 simulated hour. Interval calculated to achieve time_scale cycles per real hour.
@@ -312,10 +474,10 @@ class SimulationOrchestrator:
         def handle_interrupt(signum, frame):
             """Handle Ctrl+C and Ctrl+Z."""
             if signum == signal.SIGINT:
-                self.console.print("\n[yellow]Stopping simulation...[/yellow]")
+                self.console.print("\n[yellow]⚠ Ctrl+C detected - Stopping simulation immediately...[/yellow]")
                 self.request_stop()
             elif signum == signal.SIGTSTP:
-                self.console.print("\n[yellow]Pausing simulation (Ctrl+Z)[/yellow]")
+                self.console.print("\n[yellow]⚠ Ctrl+Z detected - Stopping simulation immediately...[/yellow]")
                 self.request_stop()
 
         signal.signal(signal.SIGINT, handle_interrupt)
@@ -337,8 +499,24 @@ class SimulationOrchestrator:
     ):
         """Main simulation loop."""
         while time.time() < target_end_time and not self._stop_requested:
+            # Track when this cycle started
+            cycle_start_time = time.time()
+
+            # Check if paused (circuit breaker)
+            if self._paused:
+                await asyncio.sleep(1)
+                if live:
+                    live.update(self._build_dashboard())
+                continue
+
+            # Get agents for this cycle (warmup support)
+            cycle_agents = agents
+            if self.warmup_controller:
+                active_count = self.warmup_controller.get_active_agent_count()
+                cycle_agents = agents[:active_count]
+
             try:
-                await self._run_cycle(agents)
+                await self._run_cycle(cycle_agents)
             except Exception as e:
                 error_msg = f"Cycle error: {str(e)}\n{traceback.format_exc()}"
                 logger.error(error_msg)
@@ -346,18 +524,48 @@ class SimulationOrchestrator:
                 self.stats.errors += 1
                 self.stats.last_error = f"Cycle: {str(e)}"[:100]
 
-            # Commit after each cycle
-            self.db.commit()
+            # Commit after each cycle (for sequential mode)
+            if not self.parallel_mode:
+                self.db.commit()
+
+            # Advance warmup
+            if self.warmup_controller:
+                self.warmup_controller.advance()
+
+            # Save checkpoint if needed
+            if self.checkpoint_manager and self.checkpoint_manager.should_save(self.stats.cycles_completed):
+                try:
+                    self.checkpoint_manager.save(self, self.stats.cycles_completed)
+                except Exception as e:
+                    logger.error(f"Failed to save checkpoint: {e}")
 
             # Update dashboard
             if live:
                 live.update(self._build_dashboard())
 
-            # Sleep until next cycle
-            await asyncio.sleep(interval_seconds)
+            # Calculate how long this cycle took (including all overhead)
+            cycle_duration = time.time() - cycle_start_time
+
+            # Sleep only for the remaining time to hit target interval
+            sleep_time = max(0, interval_seconds - cycle_duration)
+
+            if sleep_time > 0:
+                await asyncio.sleep(sleep_time)
+            else:
+                # Cycle took longer than target interval
+                logger.warning(
+                    f"Cycle {self.stats.cycles_completed} took {cycle_duration:.1f}s, "
+                    f"exceeds target interval {interval_seconds:.1f}s "
+                    f"(running {-sleep_time:.1f}s behind schedule)"
+                )
 
     async def _run_cycle(self, agents: List[Dict[str, Any]]):
         """Execute one simulation cycle."""
+        # Check for stop request before starting cycle
+        if self._stop_requested:
+            logger.info("Stop requested, aborting cycle")
+            return
+
         # 1. Process offers/agents for this cycle
         # Note: Wall clock time + time_scale multiplication in now() handles time advancement.
         # Each cycle sleeps for 3600/time_scale seconds, which naturally advances
@@ -381,40 +589,82 @@ class SimulationOrchestrator:
             logger.warning("No simulated datetime available, skipping agent processing")
             return
 
-        # 3. Process each agent
-        for agent in agents:
-            self.stats.agents_processed += 1
+        # Check for stop request before processing agents
+        if self._stop_requested:
+            logger.info("Stop requested, skipping agent processing")
+            return
 
-            try:
-                result = await self._run_agent(agent, sim_date)
+        # 3. Process agents (parallel or sequential)
+        if self.parallel_mode and self.parallel_executor:
+            # PARALLEL EXECUTION
+            cycle_result = await self.parallel_executor.execute_cycle(
+                agents=agents,
+                sim_date=sim_date,
+                store_id=self.default_store_id,
+                cycle_number=self.stats.cycles_completed,
+            )
 
-                if result.get("should_shop"):
-                    self.stats.agents_shopped += 1
-                    self.stats.sessions_created += 1
-                    self.stats.events_created += result.get("events_created", 0)
+            # Update stats from cycle result
+            self.stats.agents_processed += cycle_result.agents_processed
+            self.stats.agents_shopped += cycle_result.agents_shopped
+            self.stats.sessions_created += cycle_result.agents_shopped
+            self.stats.checkouts_completed += cycle_result.checkouts_completed
+            self.stats.checkouts_abandoned += cycle_result.checkouts_abandoned
+            self.stats.events_created += cycle_result.events_created
+            self.stats.errors += cycle_result.errors
 
-                    if result.get("checkout_decision") == "complete":
-                        self.stats.checkouts_completed += 1
-                    elif result.get("checkout_decision") == "abandon":
-                        self.stats.checkouts_abandoned += 1
+            if cycle_result.errors > 0:
+                self.stats.last_error = f"Cycle {self.stats.cycles_completed}: {cycle_result.errors} errors"
 
-            except Exception as e:
-                agent_id = agent.get("agent_id", "unknown")
-                error_msg = (
-                    f"Agent {agent_id} error: {str(e)}\n{traceback.format_exc()}"
-                )
-                logger.error(error_msg)
-                self._log_error_to_file(error_msg)
-                self.stats.errors += 1
-                self.stats.last_error = f"Agent {agent_id[:15]}: {str(e)}"[:100]
+            # Log progress
+            logger.info(
+                f"Cycle {self.stats.cycles_completed}: "
+                f"date={sim_date}, "
+                f"agents={cycle_result.agents_processed}, "
+                f"shopped={cycle_result.agents_shopped}, "
+                f"checkouts={cycle_result.checkouts_completed}, "
+                f"duration={cycle_result.duration_seconds:.2f}s"
+            )
+        else:
+            # SEQUENTIAL EXECUTION (legacy mode)
+            for agent in agents:
+                # Check for stop request on every agent (immediate abort)
+                if self._stop_requested:
+                    logger.info(f"Stop requested, aborting cycle after {self.stats.agents_processed} agents")
+                    return
 
-        # 4. Log progress
-        logger.info(
-            f"Cycle {self.stats.cycles_completed}: "
-            f"date={sim_date}, "
-            f"sessions={self.stats.sessions_created}, "
-            f"checkouts={self.stats.checkouts_completed}"
-        )
+                self.stats.agents_processed += 1
+
+                try:
+                    result = await self._run_agent(agent, sim_date)
+
+                    if result.get("should_shop"):
+                        self.stats.agents_shopped += 1
+                        self.stats.sessions_created += 1
+                        self.stats.events_created += result.get("events_created", 0)
+
+                        if result.get("checkout_decision") == "complete":
+                            self.stats.checkouts_completed += 1
+                        elif result.get("checkout_decision") == "abandon":
+                            self.stats.checkouts_abandoned += 1
+
+                except Exception as e:
+                    agent_id = agent.get("agent_id", "unknown")
+                    error_msg = (
+                        f"Agent {agent_id} error: {str(e)}\n{traceback.format_exc()}"
+                    )
+                    logger.error(error_msg)
+                    self._log_error_to_file(error_msg)
+                    self.stats.errors += 1
+                    self.stats.last_error = f"Agent {agent_id[:15]}: {str(e)}"[:100]
+
+            # Log progress (sequential mode)
+            logger.info(
+                f"Cycle {self.stats.cycles_completed}: "
+                f"date={sim_date}, "
+                f"sessions={self.stats.sessions_created}, "
+                f"checkouts={self.stats.checkouts_completed}"
+            )
 
     async def _run_agent(self, agent: Dict[str, Any], sim_date: date) -> Dict[str, Any]:
         """
@@ -444,10 +694,30 @@ class SimulationOrchestrator:
         return final_state
 
     def _load_agents(
-        self, agent_ids: Optional[List[str]] = None
+        self, agent_ids: Optional[List[str]] = None, num_agents: Optional[int] = None
     ) -> List[Dict[str, Any]]:
-        """Load agents from database."""
-        if agent_ids:
+        """Load agents from database.
+
+        Args:
+            agent_ids: Specific agent IDs to load
+            num_agents: Number of agents to randomly select (overrides agent_ids if specified)
+
+        Returns:
+            List of agent dictionaries
+        """
+        # If num_agents is specified, load random agents
+        if num_agents is not None:
+            logger.info(f"Loading {num_agents} random agents")
+            result = self.db.execute(
+                text("""
+                SELECT * FROM agents
+                WHERE is_active = true
+                ORDER BY RANDOM()
+                LIMIT :limit
+            """),
+                {"limit": num_agents}
+            )
+        elif agent_ids:
             logger.info(f"Loading specific agents: {agent_ids}")
             # Use IN clause with proper parameter binding for multiple IDs
             # Build parameterized query for variable number of IDs
@@ -460,11 +730,12 @@ class SimulationOrchestrator:
             """
             result = self.db.execute(text(query), params)
         else:
+            # Load all active agents (removed LIMIT 100 for 372 agent scaling)
             result = self.db.execute(
                 text("""
                 SELECT * FROM agents
                 WHERE is_active = true
-                LIMIT 100
+                ORDER BY agent_id
             """)
             )
 
@@ -509,6 +780,11 @@ class SimulationOrchestrator:
         )
         table.add_row("Simulated Time", sim_time_str)
         table.add_row("Cycles", str(self.stats.cycles_completed))
+
+        # Mode indicator
+        mode = "Parallel" if self.parallel_mode else "Sequential"
+        table.add_row("Mode", mode)
+
         table.add_row("─" * 18, "─" * 13)
         table.add_row("Agents Processed", str(self.stats.agents_processed))
         table.add_row("Agents Shopped", str(self.stats.agents_shopped))
@@ -519,18 +795,49 @@ class SimulationOrchestrator:
         table.add_row("Events Created", str(self.stats.events_created))
         table.add_row("Offers Assigned", str(self.stats.offers_assigned))
         table.add_row("─" * 18, "─" * 13)
+
+        # Memory usage
+        mem_stats = self.memory_monitor.get_stats()
+        if mem_stats.get("available"):
+            mem_style = "green" if mem_stats.get("is_safe", True) else "red"
+            table.add_row("Memory (MB)", f"{mem_stats['rss_mb']:.0f}", style=mem_style)
+
+        # Latency stats
+        latency = self.latency_tracker.get_aggregate()
+        if latency.count > 0:
+            table.add_row("Latency p50/p95", f"{latency.p50:.0f}/{latency.p95:.0f}ms")
+
+        # Rate limiter stats
+        rate_metrics = get_rate_limiter_metrics()
+        if rate_metrics.get("railway_api"):
+            rm = rate_metrics["railway_api"]
+            table.add_row("Rate Limit", f"{rm['refill_rate']:.0f} req/s")
+            table.add_row("Requests Made", str(rm["total_acquired"]))
+
+        # Circuit breaker
+        if self.circuit_breaker:
+            cb_status = self.circuit_breaker.get_status()
+            if cb_status["state"] == "open":
+                table.add_row("Circuit Breaker", "[red bold]OPEN[/red bold]", style="red")
+            else:
+                table.add_row("Circuit Breaker", "Closed", style="green")
+
+        table.add_row("─" * 18, "─" * 13)
         table.add_row(
             "Errors",
             str(self.stats.errors),
             style="red" if self.stats.errors > 0 else "green",
         )
         if self.stats.last_error:
-            table.add_row("Last Error", self.stats.last_error, style="red")
+            table.add_row("Last Error", self.stats.last_error[:40], style="red")
 
         title = "[bold blue]VoiceOffers Simulation[/bold blue]"
+        if self._paused:
+            title = "[bold red]VoiceOffers Simulation (PAUSED)[/bold red]"
+
         subtitle = f"Time Scale: {self.time_scale}x | LangSmith: {'ON' if os.getenv('LANGCHAIN_TRACING_V2') else 'OFF'}"
 
-        return Panel(table, title=title, subtitle=subtitle, border_style="blue")
+        return Panel(table, title=title, subtitle=subtitle, border_style="blue" if not self._paused else "red")
 
     def _build_debug_dashboard(self) -> Panel:
         """Build dashboard with debug logs."""
@@ -605,11 +912,19 @@ async def run_simulation(
     duration_hours: float = 6.0,
     time_scale: float = 24.0,
     agent_ids: Optional[List[str]] = None,
+    num_agents: Optional[int] = None,
     show_dashboard: bool = True,
     start_date: Optional[str] = None,
     process_all_agents: bool = False,
     debug_mode: bool = False,
     log_file: Optional[str] = None,
+    # Scaling parameters
+    rate_limit_rps: int = 50,
+    checkpoint_interval: int = 10,
+    warmup_cycles: int = 0,
+    parallel_mode: bool = True,
+    resume: bool = False,
+    resume_from: Optional[str] = None,
 ) -> SimulationStats:
     """
     Convenience function to run simulation.
@@ -618,11 +933,18 @@ async def run_simulation(
         duration_hours: Real hours to run
         time_scale: Time compression (24 = 1h real = 1 day simulated)
         agent_ids: Specific agents or None for all
+        num_agents: Number of agents to randomly select (overrides agent_ids if both specified)
         show_dashboard: Show Rich dashboard
         start_date: Simulated start date as ISO string (YYYY-MM-DD)
         process_all_agents: If True, scheduler processes all agents. If False, only processes filtered agents
         debug_mode: Enable debug logging in dashboard
         log_file: Optional file to write logs to
+        rate_limit_rps: API rate limit in requests per second
+        checkpoint_interval: Cycles between checkpoint saves (0 to disable)
+        warmup_cycles: Number of cycles to gradually ramp up agents
+        parallel_mode: Enable parallel agent execution
+        resume: Resume from latest checkpoint
+        resume_from: Resume from specific checkpoint file
 
     Returns:
         Final SimulationStats
@@ -674,7 +996,27 @@ async def run_simulation(
             time_scale=time_scale,
             process_all_agents=process_all_agents,
             debug_mode=debug_mode,
+            rate_limit_rps=rate_limit_rps,
+            checkpoint_interval=checkpoint_interval,
+            warmup_cycles=warmup_cycles,
+            parallel_mode=parallel_mode,
+            db_url=db_url,
         )
+
+        # Handle resume
+        if resume or resume_from:
+            if orchestrator.checkpoint_manager:
+                if resume_from:
+                    checkpoint_path = Path(resume_from)
+                else:
+                    checkpoint_path = orchestrator.checkpoint_manager.find_latest()
+
+                if checkpoint_path and checkpoint_path.exists():
+                    orchestrator.checkpoint_manager.resume(checkpoint_path, orchestrator)
+                    logger.info(f"Resumed from checkpoint: {checkpoint_path}")
+                else:
+                    logger.warning("No checkpoint found to resume from, starting fresh")
+
         # Parse start_date string to date object
         parsed_start_date = None
         if start_date:
@@ -683,10 +1025,14 @@ async def run_simulation(
         return await orchestrator.run(
             duration_hours=duration_hours,
             agent_ids=agent_ids,
+            num_agents=num_agents,
             show_dashboard=show_dashboard,
             start_date=parsed_start_date,
         )
     finally:
+        # Cleanup parallel executor if used
+        if hasattr(orchestrator, 'parallel_executor') and orchestrator.parallel_executor:
+            orchestrator.parallel_executor.shutdown()
         db.close()
 
 
@@ -707,6 +1053,15 @@ Examples:
 
   # Run without dashboard (logs to console)
   python -m app.simulation.orchestrator --hours 6 --no-dashboard
+
+  # Run 372 agents in parallel with rate limiting
+  python -m app.simulation.orchestrator --hours 6 --time-scale 48 --rate-limit 50
+
+  # Resume from latest checkpoint
+  python -m app.simulation.orchestrator --resume
+
+  # Run with warmup (gradually increase agents)
+  python -m app.simulation.orchestrator --hours 6 --warmup-cycles 10
         """,
     )
     parser.add_argument(
@@ -728,6 +1083,12 @@ Examples:
         "--agents", nargs="*", help="Specific agent IDs (e.g., agent_001 agent_002)"
     )
     parser.add_argument(
+        "--num-agents",
+        type=int,
+        default=None,
+        help="Number of agents to randomly select (e.g., 50). Overrides --agents if both specified.",
+    )
+    parser.add_argument(
         "--no-dashboard", action="store_true", help="Disable Rich dashboard"
     )
     parser.add_argument(
@@ -746,6 +1107,46 @@ Examples:
         default=None,
         help="Write all logs to specified file (e.g., simulation.log)",
     )
+    # Scaling arguments
+    parser.add_argument(
+        "--rate-limit",
+        type=int,
+        default=50,
+        help="API rate limit in requests per second (default: 50)",
+    )
+    parser.add_argument(
+        "--checkpoint-interval",
+        type=int,
+        default=10,
+        help="Cycles between checkpoint saves (default: 10, 0 to disable)",
+    )
+    parser.add_argument(
+        "--warmup-cycles",
+        type=int,
+        default=0,
+        help="Number of cycles to gradually ramp up agents (default: 0)",
+    )
+    parser.add_argument(
+        "--sequential",
+        action="store_true",
+        help="Use sequential execution instead of parallel (for debugging)",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume from latest checkpoint",
+    )
+    parser.add_argument(
+        "--resume-from",
+        type=str,
+        default=None,
+        help="Resume from specific checkpoint file",
+    )
+    parser.add_argument(
+        "--fresh",
+        action="store_true",
+        help="Start fresh, ignore any checkpoints",
+    )
 
     args = parser.parse_args()
 
@@ -755,10 +1156,17 @@ Examples:
             duration_hours=args.hours,
             time_scale=args.time_scale,
             agent_ids=args.agents,
+            num_agents=args.num_agents,
             show_dashboard=not args.no_dashboard,
             start_date=args.start_date,
             process_all_agents=args.process_all_agents,
             debug_mode=args.debug,
             log_file=args.log_file,
+            rate_limit_rps=args.rate_limit,
+            checkpoint_interval=args.checkpoint_interval,
+            warmup_cycles=args.warmup_cycles,
+            parallel_mode=not args.sequential,
+            resume=args.resume,
+            resume_from=args.resume_from,
         )
     )

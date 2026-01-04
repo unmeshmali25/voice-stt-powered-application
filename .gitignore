@@ -281,6 +281,8 @@ aws_setup.md
 # =============================================================================
 # Markdown documentation files
 *.md
+!scaling-simulation-qa.md
+!scaling-simulation.md
 !README.md
 !PRODUCTION_DEPLOYMENT_CHECKLIST.md
 # Keep README.md and deployment checklists but ignore all other markdown files

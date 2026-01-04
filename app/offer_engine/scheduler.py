@@ -7,7 +7,7 @@ Orchestrates offer refresh operations.
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -296,3 +296,150 @@ class OfferScheduler:
         ).fetchall()
 
         return [str(row.id) for row in result]
+
+    def initialize_all_agents(
+        self,
+        agent_ids: Optional[List[str]] = None,
+        process_all: bool = True,
+        should_stop_check: Optional[Callable[[], bool]] = None
+    ) -> AdvanceResult:
+        """
+        Initialize all agents with offers before simulation begins.
+
+        Called once at orchestrator startup to ensure all agents
+        have offers before the first cycle executes.
+
+        Args:
+            agent_ids: Optional list of agent IDs to filter
+            process_all: If True, process all agents. If False, only process filtered agents
+            should_stop_check: Optional callback function that returns True if initialization should stop
+
+        Returns:
+            AdvanceResult with initialization statistics
+        """
+        if not self.config.simulation_mode:
+            raise ValueError("Simulation mode is not enabled")
+
+        if not self.time_service.is_simulation_active():
+            raise ValueError("Simulation is not currently active")
+
+        logger.info("="*60)
+        logger.info("INITIALIZING AGENTS WITH OFFERS")
+        logger.info("="*60)
+
+        # Get or create the first cycle
+        current_cycle = self.cycle_manager.get_or_create_current_cycle()
+        logger.info(f"Using cycle {current_cycle.cycle_number} (ID: {current_cycle.id})")
+
+        # Get all agents needing initialization (brand new agents with no offers)
+        logger.info(f"Initialization parameters: agent_ids={'[' + str(len(agent_ids)) + ' agents]' if agent_ids else 'None'}, process_all={process_all}")
+
+        users = self._get_users_needing_initialization(
+            agent_ids=agent_ids,
+            process_all=process_all
+        )
+
+        logger.info(f"Found {len(users)} agents needing initial offer assignment")
+
+        # Assign offers to each agent
+        # Note: Sequential to avoid database session concurrency issues
+        # Future: Could parallelize with thread-local sessions
+        total_offers_assigned = 0
+        initialized_count = 0
+
+        for i, user_id in enumerate(users, 1):
+            # Check if we should stop (Ctrl+C pressed)
+            if should_stop_check and should_stop_check():
+                logger.warning(f"  Initialization aborted after {i-1}/{len(users)} agents")
+                break
+
+            result = self._perform_refresh(user_id)
+            if result.refreshed:
+                initialized_count += 1
+                total_offers_assigned += result.assigned_count
+                # Progress logging every 10 agents
+                if i % 10 == 0 or i == len(users):
+                    logger.info(f"  Progress: {i}/{len(users)} agents processed, {initialized_count} initialized")
+            else:
+                logger.warning(f"  Failed to initialize agent {user_id[:8]}...: {result.reason}")
+
+        logger.info("="*60)
+        logger.info(f"INITIALIZATION COMPLETE: {initialized_count} agents, {total_offers_assigned} offers assigned")
+        logger.info("="*60)
+
+        return AdvanceResult(
+            previous_date=None,
+            new_date=str(self.time_service.get_simulated_date()),
+            cycles_completed=0,
+            users_refreshed=initialized_count,
+            offers_assigned=total_offers_assigned,
+            real_hours_advanced=0.0
+        )
+
+    def _get_users_needing_initialization(
+        self,
+        agent_ids: Optional[List[str]] = None,
+        process_all: bool = True
+    ) -> List[str]:
+        """
+        Get all simulation agents who have NEVER been enrolled in a cycle.
+
+        This is specifically for initial setup, not ongoing refresh.
+
+        Args:
+            agent_ids: Optional list of agent IDs to filter
+            process_all: If True, process all agents. If False, only process filtered agents
+
+        Returns:
+            List of user IDs needing initialization
+        """
+        # Build WHERE clause for agent filtering
+        agent_filter = ""
+        agent_params = {}
+        if not process_all and agent_ids:
+            placeholders = ", ".join([f":aid_{i}" for i in range(len(agent_ids))])
+            agent_filter = f"AND a.agent_id IN ({placeholders})"
+            agent_params = {f"aid_{i}": aid for i, aid in enumerate(agent_ids)}
+            logger.info(f"Filtering to {len(agent_ids)} specific agents for initialization")
+
+        # Get all active agent users
+        all_agent_users_query = f"""
+            SELECT DISTINCT u.id
+            FROM users u
+            JOIN agents a ON a.user_id = u.id
+            WHERE a.is_active = true
+              {agent_filter}
+        """
+        all_agent_users = self.db.execute(
+            text(all_agent_users_query),
+            agent_params
+        ).fetchall()
+
+        all_agent_ids = {str(row.id) for row in all_agent_users}
+
+        # Get agents already enrolled in any cycle
+        enrolled_users_query = f"""
+            SELECT DISTINCT u.id
+            FROM user_offer_cycles uoc
+            JOIN users u ON u.id = uoc.user_id
+            JOIN agents a ON a.user_id = u.id
+            WHERE uoc.is_simulation = true
+              {agent_filter}
+        """
+        enrolled_users = self.db.execute(
+            text(enrolled_users_query),
+            agent_params
+        ).fetchall()
+
+        enrolled_ids = {str(row.id) for row in enrolled_users}
+
+        # Find brand new agents (never enrolled)
+        new_user_ids = all_agent_ids - enrolled_ids
+
+        logger.info(
+            f"Initialization check: {len(all_agent_ids)} total agents, "
+            f"{len(enrolled_ids)} already enrolled, "
+            f"{len(new_user_ids)} need initialization"
+        )
+
+        return list(new_user_ids)

@@ -134,12 +134,17 @@ FAISS_INDEX_PATH = Path(os.getenv("FAISS_INDEX_PATH", "./data/index/faiss.index"
 FAISS_META_PATH = Path(os.getenv("FAISS_META_PATH", "./data/index/meta.json")).resolve()
 
 # Database engine with connection pooling
+# Pool scaled for 372 concurrent simulation agents (Supabase Pro: 100+ connections)
+SIMULATION_POOL_SIZE = int(os.getenv("SIMULATION_POOL_SIZE", "50"))
+SIMULATION_MAX_OVERFLOW = int(os.getenv("SIMULATION_MAX_OVERFLOW", "75"))
+
 engine = create_engine(
     DATABASE_URL,
-    pool_size=5,
-    max_overflow=10,
+    pool_size=SIMULATION_POOL_SIZE,
+    max_overflow=SIMULATION_MAX_OVERFLOW,
     pool_pre_ping=True,
-    pool_recycle=3600
+    pool_recycle=1800,  # Recycle connections every 30 min (was 1 hour)
+    pool_timeout=30,    # Wait up to 30s for a connection
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
