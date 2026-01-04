@@ -367,10 +367,50 @@ class SimulationOrchestrator:
             logger.info(
                 f"Simulation started. Active: {self.scheduler.time_service.is_simulation_active()}"
             )
+            should_initialize = True  # Track if this is a fresh start (for initialization)
         else:
             logger.warning(
                 "Simulation already active, skipping start_simulation() call"
             )
+            should_initialize = False  # Skip initialization on resume
+
+        # Initialize all agents with offers BEFORE first cycle
+        if should_initialize:
+            logger.info("=" * 80)
+            logger.info("STEP 1: Initializing agents with offers...")
+            logger.info("=" * 80)
+
+            try:
+                init_result = self.scheduler.initialize_all_agents(
+                    agent_ids=self.agent_ids,
+                    process_all=self.process_all_agents
+                )
+
+                # Update stats with initialization results
+                self.stats.offers_assigned += init_result.offers_assigned
+
+                logger.info(
+                    f"Initialization complete: {init_result.users_refreshed} agents initialized, "
+                    f"{init_result.offers_assigned} offers assigned"
+                )
+
+                if init_result.offers_assigned == 0:
+                    logger.error(
+                        "WARNING: No offers were assigned during initialization! "
+                        "This may indicate a problem with the coupon pool or database state."
+                    )
+
+            except Exception as e:
+                logger.error(f"Failed to initialize agents: {e}")
+                import traceback
+                traceback.print_exc()
+                # Continue anyway - the refresh logic will catch them later
+
+            logger.info("=" * 80)
+            logger.info("STEP 2: Starting simulation cycles...")
+            logger.info("=" * 80)
+        else:
+            logger.info("Skipping initialization (resuming existing simulation)")
 
         # Calculate timing
         # Each cycle advances 1 simulated hour. Interval calculated to achieve time_scale cycles per real hour.
@@ -442,6 +482,9 @@ class SimulationOrchestrator:
     ):
         """Main simulation loop."""
         while time.time() < target_end_time and not self._stop_requested:
+            # Track when this cycle started
+            cycle_start_time = time.time()
+
             # Check if paused (circuit breaker)
             if self._paused:
                 await asyncio.sleep(1)
@@ -483,8 +526,21 @@ class SimulationOrchestrator:
             if live:
                 live.update(self._build_dashboard())
 
-            # Sleep until next cycle
-            await asyncio.sleep(interval_seconds)
+            # Calculate how long this cycle took (including all overhead)
+            cycle_duration = time.time() - cycle_start_time
+
+            # Sleep only for the remaining time to hit target interval
+            sleep_time = max(0, interval_seconds - cycle_duration)
+
+            if sleep_time > 0:
+                await asyncio.sleep(sleep_time)
+            else:
+                # Cycle took longer than target interval
+                logger.warning(
+                    f"Cycle {self.stats.cycles_completed} took {cycle_duration:.1f}s, "
+                    f"exceeds target interval {interval_seconds:.1f}s "
+                    f"(running {-sleep_time:.1f}s behind schedule)"
+                )
 
     async def _run_cycle(self, agents: List[Dict[str, Any]]):
         """Execute one simulation cycle."""
