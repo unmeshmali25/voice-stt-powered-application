@@ -308,7 +308,13 @@ class ParallelAgentExecutor:
             db.rollback()
             duration_ms = (time.time() - start_time) * 1000
 
-            logger.error(f"Agent {agent_id} execution failed: {e}")
+            # Detailed error logging
+            import traceback
+            error_details = f"{e}\n{traceback.format_exc()}"
+            logger.error(f"Agent {agent_id} execution failed: {error_details}")
+
+            # Also print to console to ensure visibility
+            print(f"❌ AGENT ERROR - {agent_id}: {str(e)}")
 
             # Record error latency
             if self.latency_tracker:
