@@ -332,6 +332,8 @@ class OfferScheduler:
         logger.info(f"Using cycle {current_cycle.cycle_number} (ID: {current_cycle.id})")
 
         # Get all agents needing initialization (brand new agents with no offers)
+        logger.info(f"Initialization parameters: agent_ids={'[' + str(len(agent_ids)) + ' agents]' if agent_ids else 'None'}, process_all={process_all}")
+
         users = self._get_users_needing_initialization(
             agent_ids=agent_ids,
             process_all=process_all

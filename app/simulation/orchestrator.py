@@ -339,9 +339,6 @@ class SimulationOrchestrator:
         """
         logger.info(f"Starting simulation: {duration_hours}h at {self.time_scale}x")
 
-        # Store agent IDs for scheduler filtering
-        self.agent_ids = agent_ids
-
         # Load agents
         agents = self._load_agents(agent_ids, num_agents)
         logger.info(f"Loaded {len(agents)} agents")
@@ -349,6 +346,17 @@ class SimulationOrchestrator:
         if not agents:
             logger.error("No agents found!")
             return self.stats
+
+        # Extract agent IDs from loaded agents for scheduler filtering
+        # This ensures when using --num-agents, only those agents get offers
+        loaded_agent_ids = [a.get('agent_id') for a in agents]
+        self.agent_ids = loaded_agent_ids
+        logger.info(f"Agent filtering configured:")
+        logger.info(f"  - Loaded agents: {len(agents)}")
+        logger.info(f"  - Agent IDs for scheduler: {len(self.agent_ids)}")
+        logger.info(f"  - Process all agents flag: {self.process_all_agents}")
+        if not self.process_all_agents:
+            logger.info(f"  ✓ Only these {len(self.agent_ids)} agents will receive offers")
 
         # Initialize scaling components that depend on agent count
         self._initialize_scaling_components(len(agents))
