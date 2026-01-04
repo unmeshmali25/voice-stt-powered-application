@@ -137,13 +137,22 @@ def create_test_agents(session, count: int = 2):
     ]
 
     for agent_data in test_agents[:count]:
-        seed_single_agent(session, agent_data)
+        seed_single_agent(session, agent_data, auto_commit=False)
 
+    # Commit all test agents at once (only 2-3 agents)
+    session.commit()
     logger.info(f"Created {count} test agents")
 
 
-def seed_single_agent(session, agent_data: dict, force: bool = False):
-    """Seed a single agent into the database."""
+def seed_single_agent(session, agent_data: dict, force: bool = False, auto_commit: bool = True):
+    """Seed a single agent into the database.
+
+    Args:
+        session: Database session
+        agent_data: Agent data dictionary
+        force: Whether to delete existing agents
+        auto_commit: Whether to commit after insert (default True for backward compatibility)
+    """
     agent_id = agent_data.get("agent_id")
 
     # Check if agent already exists
@@ -228,7 +237,8 @@ def seed_single_agent(session, agent_data: dict, force: bool = False):
         "sample_shopping_patterns": agent_data.get("sample_shopping_patterns"),
     })
 
-    session.commit()
+    if auto_commit:
+        session.commit()
     logger.info(f"Created agent {agent_id} with user_id {user_id}")
 
 
@@ -284,13 +294,26 @@ def seed_from_excel(session, excel_path: str, count: int = None, force: bool = F
         logger.info(f"Limiting to first {count} personas")
 
     seeded_count = 0
-    for agent_data in personas:
+    batch_size = 50  # Commit every 50 agents to avoid overwhelming connection pooler
+
+    for idx, agent_data in enumerate(personas):
         try:
-            seed_single_agent(session, agent_data, force=force)
+            # Don't auto-commit - we'll batch commit
+            seed_single_agent(session, agent_data, force=force, auto_commit=False)
             seeded_count += 1
+
+            # Commit every batch_size agents
+            if (idx + 1) % batch_size == 0:
+                session.commit()
+                logger.info(f"Progress: Seeded {seeded_count}/{len(personas)} agents (committed batch)")
         except Exception as e:
             logger.error(f"Failed to seed agent {agent_data.get('agent_id')}: {e}")
             session.rollback()
+
+    # Final commit for remaining agents
+    if seeded_count % batch_size != 0:
+        session.commit()
+        logger.info(f"Final commit: Seeded {seeded_count} agents total")
 
     logger.info(f"Finished seeding {seeded_count} agents from {excel_path}")
 
