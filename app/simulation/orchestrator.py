@@ -316,6 +316,52 @@ class SimulationOrchestrator:
             f.write(f"[{datetime.now()}]\n{error_msg}\n")
             f.write("-" * 80 + "\n\n")
 
+    def _validate_agent_availability(self, required_count: Optional[int] = None) -> tuple[bool, str]:
+        """
+        Pre-flight check for agent availability.
+
+        Args:
+            required_count: Number of agents needed (from num_agents param)
+
+        Returns:
+            (is_valid, error_message)
+        """
+        try:
+            result = self.db.execute(
+                text("SELECT COUNT(*) FROM agents WHERE is_active = true")
+            ).scalar()
+
+            actual_count = result or 0
+
+            # Critical: No agents at all
+            if actual_count == 0:
+                return False, (
+                    f"\n❌ CRITICAL: No active agents found in database!\n\n"
+                    f"Expected: At least {required_count or 2400} active agents\n"
+                    f"Found: 0 agents\n\n"
+                    f"Agents were likely deleted by running 13_manual_cleanup.sql.\n\n"
+                    f"To fix, reseed agents:\n"
+                    f"  python scripts/seed_simulation_agents.py data/personas/personas.xlsx\n\n"
+                    f"Or for quick test:\n"
+                    f"  python scripts/seed_simulation_agents.py --test\n"
+                )
+
+            # Warning: Not enough agents for request
+            if required_count and actual_count < required_count:
+                return False, (
+                    f"\n⚠️  WARNING: Not enough agents for simulation!\n\n"
+                    f"Requested: {required_count} agents\n"
+                    f"Available: {actual_count} active agents\n\n"
+                    f"Either reduce --num-agents or reseed more agents.\n"
+                )
+
+            # Success
+            logger.info(f"✓ Agent validation passed: {actual_count} active agents available")
+            return True, ""
+
+        except Exception as e:
+            return False, f"❌ Agent validation failed: {str(e)}"
+
     async def run(
         self,
         duration_hours: float,
@@ -338,6 +384,13 @@ class SimulationOrchestrator:
             Final SimulationStats
         """
         logger.info(f"Starting simulation: {duration_hours}h at {self.time_scale}x")
+
+        # Pre-flight validation: Check agent availability
+        is_valid, error_msg = self._validate_agent_availability(num_agents)
+        if not is_valid:
+            logger.error(error_msg)
+            print(error_msg)  # Print to user console
+            return self.stats
 
         # Load agents
         agents = self._load_agents(agent_ids, num_agents)

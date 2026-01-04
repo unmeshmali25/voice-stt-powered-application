@@ -17,6 +17,11 @@ time_window AS (
     FROM latest_run
 )
 SELECT
+    'NOTE: Results filtered to is_simulated = true' as info,
+    'Simulation data only' as from_time,
+    '' as to_time
+UNION ALL
+SELECT
     'Latest Run Time Window' as info,
     TO_CHAR(window_start, 'YYYY-MM-DD HH24:MI:SS') as from_time,
     TO_CHAR(latest_start, 'YYYY-MM-DD HH24:MI:SS') as to_time

@@ -1,8 +1,15 @@
 -- ============================================
 -- MANUAL SIMULATION DATA CLEANUP
--- Deletes all simulation data using is_simulated flags
 -- ============================================
-
+--
+-- ⚠️  SAFETY NOTICE: This script does NOT delete agents!
+-- Agents are permanent and managed via scripts/seed_simulation_agents.py
+--
+-- What this deletes:
+--   ✓ Simulated sessions, orders, events (is_simulated = true)
+--   ✓ Cart items and coupons for agent users
+--   ✓ User coupons/offer cycles (is_simulation = true)
+--
 -- WARNING: This will delete ALL simulation data!
 -- Make sure you want to do this before running.
 
@@ -51,12 +58,22 @@ DELETE FROM user_offer_cycles WHERE is_simulation = true;
 -- 11. Delete simulation offer cycles
 DELETE FROM offer_cycles WHERE is_simulation = true;
 
--- 12. Delete agent users from users table
-DELETE FROM users
-WHERE id IN (SELECT user_id FROM agents WHERE user_id IS NOT NULL);
+-- ============================================
+-- AGENT DELETION DISABLED FOR SAFETY
+-- ============================================
+-- Agents are permanent fixtures managed separately.
+-- To rebuild agents, use: python scripts/seed_simulation_agents.py --force
+--
+-- DANGER: Uncommenting these lines will DELETE ALL AGENTS!
+-- Only do this if you're rebuilding the entire database from scratch.
+-- ============================================
 
--- 13. Delete agents
-DELETE FROM agents;
+-- 12. Delete agent users from users table (DISABLED)
+-- DELETE FROM users
+-- WHERE id IN (SELECT user_id FROM agents WHERE user_id IS NOT NULL);
+
+-- 13. Delete agents (DISABLED)
+-- DELETE FROM agents;
 
 -- 14. Reset simulation state
 UPDATE simulation_state
