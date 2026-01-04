@@ -1,7 +1,19 @@
 #!/usr/bin/env python3
 """
-Clean up all simulation data from database.
-Run this before starting fresh simulations.
+Clean up SIMULATION DATA ONLY from database.
+
+⚠️  IMPORTANT: This script does NOT delete agents!
+Agents are permanent and managed via scripts/seed_simulation_agents.py
+
+What this deletes:
+  ✓ Simulated shopping sessions, events, orders
+  ✓ Cart items and coupons for agent users
+  ✓ User coupons/offer cycles marked as simulation
+
+What this preserves:
+  ✗ Agents (permanent fixtures)
+  ✗ Real user data
+  ✗ Product catalog
 
 Usage:
     python cleanup_simulation.py          # With confirmation
