@@ -1,6 +1,7 @@
 -- ============================================
 -- COMPREHENSIVE SUMMARY
 -- All metrics in a single unified view
+-- Filters by is_simulated = true to exclude real user data
 -- ============================================
 
 SELECT
@@ -11,33 +12,33 @@ SELECT
 UNION ALL
 SELECT
     'Agents Shopped',
-    (SELECT COUNT(DISTINCT user_id) FROM shopping_sessions),
+    (SELECT COUNT(DISTINCT user_id) FROM shopping_sessions WHERE is_simulated = true),
     1010,
-    (SELECT COUNT(DISTINCT user_id) FROM shopping_sessions) = 1010
+    (SELECT COUNT(DISTINCT user_id) FROM shopping_sessions WHERE is_simulated = true) = 1010
 UNION ALL
 SELECT
     'Sessions Created',
-    (SELECT COUNT(*) FROM shopping_sessions),
+    (SELECT COUNT(*) FROM shopping_sessions WHERE is_simulated = true),
     1010,
-    (SELECT COUNT(*) FROM shopping_sessions) = 1010
+    (SELECT COUNT(*) FROM shopping_sessions WHERE is_simulated = true) = 1010
 UNION ALL
 SELECT
     'Checkouts',
-    (SELECT COUNT(*) FROM shopping_sessions WHERE status = 'completed'),
+    (SELECT COUNT(*) FROM shopping_sessions WHERE status = 'completed' AND is_simulated = true),
     539,
-    (SELECT COUNT(*) FROM shopping_sessions WHERE status = 'completed') = 539
+    (SELECT COUNT(*) FROM shopping_sessions WHERE status = 'completed' AND is_simulated = true) = 539
 UNION ALL
 SELECT
     'Abandoned',
-    (SELECT COUNT(*) FROM shopping_sessions WHERE status = 'abandoned'),
+    (SELECT COUNT(*) FROM shopping_sessions WHERE status = 'abandoned' AND is_simulated = true),
     471,
-    (SELECT COUNT(*) FROM shopping_sessions WHERE status = 'abandoned') = 471
+    (SELECT COUNT(*) FROM shopping_sessions WHERE status = 'abandoned' AND is_simulated = true) = 471
 UNION ALL
 SELECT
     'Events Created',
-    (SELECT COUNT(*) FROM shopping_session_events),
+    (SELECT COUNT(*) FROM shopping_session_events WHERE is_simulated = true),
     6598,
-    (SELECT COUNT(*) FROM shopping_session_events) = 6598
+    (SELECT COUNT(*) FROM shopping_session_events WHERE is_simulated = true) = 6598
 UNION ALL
 SELECT
     'Offers Assigned',
