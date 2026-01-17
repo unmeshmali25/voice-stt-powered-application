@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Coupon } from '../types/coupon'
 import { Product } from '../types/product'
 import { useAuth } from './useAuth'
@@ -111,6 +111,7 @@ export function useStoreData() {
   const [isWalletView, setIsWalletView] = useState(true)
   const [categoryBrandVisibleCount, setCategoryBrandVisibleCount] = useState(5)
   const { user, signOut } = useAuth()
+  const searchDebounceRef = useRef<NodeJS.Timeout | null>(null)
 
   const loadRecommendations = useCallback(async () => {
     setIsLoadingProducts(true)
@@ -248,6 +249,13 @@ export function useStoreData() {
   const handleTranscriptChange = useCallback(async (newTranscript: string) => {
     setTranscript(newTranscript)
 
+    // Clear any pending debounced search
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current)
+      searchDebounceRef.current = null
+    }
+
+    // Empty transcript: reset immediately (no debounce)
     if (!newTranscript.trim()) {
       setIsWalletView(true)
       setCategoryBrandVisibleCount(5)
@@ -257,82 +265,81 @@ export function useStoreData() {
       return
     }
 
-    setIsWalletView(false)
-    setCategoryBrandVisibleCount(4)
-    setHasSearched(true)
+    // Debounce actual search by 300ms
+    searchDebounceRef.current = setTimeout(async () => {
+      setIsWalletView(false)
+      setCategoryBrandVisibleCount(4)
+      setHasSearched(true)
 
-    const { data: { session } } = await supabase.auth.getSession()
+      const { data: { session } } = await supabase.auth.getSession()
 
-    if (!session?.access_token) {
-      console.error('No authentication token available')
-      return
-    }
-
-    setIsLoadingProducts(true)
-    try {
-      const productsResponse = await apiFetch('/api/products/search', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ query: newTranscript, limit: 50 })
-      })
-
-      if (productsResponse.ok) {
-        const productsData = await productsResponse.json()
-        const transformedProducts = productsData.products.map((p: any) => ({
-          id: p.id,
-          name: p.name,
-          description: p.description,
-          imageUrl: p.imageUrl,
-          price: p.price,
-          rating: p.rating,
-          reviewCount: p.reviewCount,
-          category: p.category,
-          brand: p.brand,
-          promoText: p.promoText,
-          inStock: p.inStock
-        }))
-        setProducts(transformedProducts)
+      if (!session?.access_token) {
+        console.error('No authentication token available')
+        return
       }
-    } catch (error) {
-      console.error('Product search failed:', error)
-    } finally {
-      setIsLoadingProducts(false)
-    }
 
-    setIsLoadingCoupons(true)
-    try {
-      const couponsResponse = await apiFetch('/api/coupons/search', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ question: newTranscript })
-      })
+      // Run product and coupon searches in parallel
+      setIsLoadingProducts(true)
+      setIsLoadingCoupons(true)
 
-      if (couponsResponse.ok) {
-        const couponsData = await couponsResponse.json()
-        const transformedCoupons = couponsData.results.map((c: any) => ({
-          id: c.id,
-          type: c.type,
-          discountDetails: c.discount_details || c.discountDetails,
-          categoryOrBrand: c.category_or_brand || c.categoryOrBrand,
-          expirationDate: c.expiration_date || c.expirationDate,
-          terms: c.terms
-        }))
+      try {
+        const [productsResponse, couponsResponse] = await Promise.all([
+          apiFetch('/api/products/search', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: newTranscript, limit: 50 })
+          }),
+          apiFetch('/api/coupons/search', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ question: newTranscript })
+          })
+        ])
 
-        const frontstore = transformedCoupons.filter((c: Coupon) => c.type === 'frontstore')
-        const categoryBrand = transformedCoupons.filter((c: Coupon) => c.type !== 'frontstore')
+        // Process products
+        if (productsResponse.ok) {
+          const productsData = await productsResponse.json()
+          const transformedProducts = productsData.products.map((p: any) => ({
+            id: p.id,
+            name: p.name,
+            description: p.description,
+            imageUrl: p.imageUrl,
+            price: p.price,
+            rating: p.rating,
+            reviewCount: p.reviewCount,
+            category: p.category,
+            brand: p.brand,
+            promoText: p.promoText,
+            inStock: p.inStock
+          }))
+          setProducts(transformedProducts)
+        }
 
-        setFrontstoreCoupons(frontstore)
-        setCategoryBrandCoupons(categoryBrand)
+        // Process coupons
+        if (couponsResponse.ok) {
+          const couponsData = await couponsResponse.json()
+          const transformedCoupons = couponsData.results.map((c: any) => ({
+            id: c.id,
+            type: c.type,
+            discountDetails: c.discount_details || c.discountDetails,
+            categoryOrBrand: c.category_or_brand || c.categoryOrBrand,
+            expirationDate: c.expiration_date || c.expirationDate,
+            terms: c.terms
+          }))
+
+          const frontstore = transformedCoupons.filter((c: Coupon) => c.type === 'frontstore')
+          const categoryBrand = transformedCoupons.filter((c: Coupon) => c.type !== 'frontstore')
+
+          setFrontstoreCoupons(frontstore)
+          setCategoryBrandCoupons(categoryBrand)
+        }
+      } catch (error) {
+        console.error('Search failed:', error)
+      } finally {
+        setIsLoadingProducts(false)
+        setIsLoadingCoupons(false)
       }
-    } catch (error) {
-      console.error('Coupon search failed:', error)
-    } finally {
-      setIsLoadingCoupons(false)
-    }
+    }, 300)
   }, [loadRecommendations, loadWalletCoupons])
 
   const handleLoadMoreCoupons = useCallback(() => {
@@ -378,6 +385,15 @@ export function useStoreData() {
     }
 
     return []
+  }, [])
+
+  // Cleanup debounce timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (searchDebounceRef.current) {
+        clearTimeout(searchDebounceRef.current)
+      }
+    }
   }, [])
 
   return {

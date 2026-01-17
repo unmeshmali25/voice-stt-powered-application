@@ -31,7 +31,7 @@ from starlette.staticfiles import StaticFiles
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
-from openai import OpenAI
+from openai import OpenAI, AsyncOpenAI
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, Session
 from supabase import create_client, Client
@@ -160,6 +160,25 @@ if SUPABASE_URL and SUPABASE_KEY:
         supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
     except Exception as e:
         logging.error(f"Failed to initialize Supabase client: {e}")
+
+# Async OpenAI client for non-blocking API calls
+_async_openai_client: Optional[AsyncOpenAI] = None
+
+def get_async_openai_client() -> AsyncOpenAI:
+    """Get or create async OpenAI client for non-blocking API calls."""
+    global _async_openai_client
+    if _async_openai_client is None:
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise HTTPException(status_code=500, detail="OpenAI API key not configured")
+        _async_openai_client = AsyncOpenAI(
+            api_key=api_key,
+            default_headers={
+                "X-Environment": ENV,
+                "X-User-Agent": f"MultiModalAIRetail/1.0/{ENV}"
+            }
+        )
+    return _async_openai_client
 
 # --- App ---
 logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper(), logging.INFO))
@@ -390,7 +409,7 @@ def assign_random_coupons_to_user(db: Session, user_id: str) -> int:
         
         total_assigned = 0
         
-        # Assign frontstore coupons
+        # Assign frontstore coupons (bulk insert)
         if frontstore_needed > 0:
             result = db.execute(
                 text("""
@@ -405,19 +424,25 @@ def assign_random_coupons_to_user(db: Session, user_id: str) -> int:
                 """),
                 {"user_id": user_id, "limit": frontstore_needed}
             )
-            
-            for row in result.fetchall():
+
+            coupon_ids = [row[0] for row in result.fetchall()]
+            if coupon_ids:
+                values_list = []
+                params = {"user_id": user_id}
+                for i, cid in enumerate(coupon_ids):
+                    values_list.append(f"(:user_id, :cid_{i}, NOW() + INTERVAL '14 days')")
+                    params[f"cid_{i}"] = cid
                 db.execute(
-                    text("""
+                    text(f"""
                         INSERT INTO user_coupons (user_id, coupon_id, eligible_until)
-                        VALUES (:user_id, :coupon_id, NOW() + INTERVAL '14 days')
+                        VALUES {', '.join(values_list)}
                         ON CONFLICT (user_id, coupon_id) DO NOTHING
                     """),
-                    {"user_id": user_id, "coupon_id": row[0]}
+                    params
                 )
-                total_assigned += 1
-        
-        # Assign category/brand coupons
+                total_assigned += len(coupon_ids)
+
+        # Assign category/brand coupons (bulk insert)
         if category_brand_needed > 0:
             result = db.execute(
                 text("""
@@ -432,17 +457,23 @@ def assign_random_coupons_to_user(db: Session, user_id: str) -> int:
                 """),
                 {"user_id": user_id, "limit": category_brand_needed}
             )
-            
-            for row in result.fetchall():
+
+            coupon_ids = [row[0] for row in result.fetchall()]
+            if coupon_ids:
+                values_list = []
+                params = {"user_id": user_id}
+                for i, cid in enumerate(coupon_ids):
+                    values_list.append(f"(:user_id, :cid_{i}, NOW() + INTERVAL '14 days')")
+                    params[f"cid_{i}"] = cid
                 db.execute(
-                    text("""
+                    text(f"""
                         INSERT INTO user_coupons (user_id, coupon_id, eligible_until)
-                        VALUES (:user_id, :coupon_id, NOW() + INTERVAL '14 days')
+                        VALUES {', '.join(values_list)}
                         ON CONFLICT (user_id, coupon_id) DO NOTHING
                     """),
-                    {"user_id": user_id, "coupon_id": row[0]}
+                    params
                 )
-                total_assigned += 1
+                total_assigned += len(coupon_ids)
         
         db.commit()
         
@@ -726,25 +757,18 @@ async def stt(
 
     # Call OpenAI Whisper API
     try:
-        logger.info(f"Initializing OpenAI client for user {user_id}")
-        # Add environment tracking header for OpenAI usage monitoring
-        client = OpenAI(
-            api_key=api_key,
-            default_headers={
-                "X-Environment": ENV,
-                "X-User-Agent": f"MultiModalAIRetail/{app.version}/{ENV}"
-            }
-        )
+        logger.info(f"Initializing async OpenAI client for user {user_id}")
+        client = get_async_openai_client()
 
         import io
         audio_file = io.BytesIO(audio_bytes)
         audio_file.name = f"audio.{ext}"
-        
+
         logger.info(f"Audio file prepared: {len(audio_bytes)} bytes, extension: {ext}")
 
         t_api_start = time.time()
-        logger.info(f"Calling OpenAI Whisper API for user {user_id}")
-        response = client.audio.transcriptions.create(
+        logger.info(f"Calling OpenAI Whisper API (async) for user {user_id}")
+        response = await client.audio.transcriptions.create(
             model="whisper-1",
             file=audio_file,
             response_format="json"
@@ -978,15 +1002,8 @@ async def coupon_search(
         ]
 
         try:
-            # Add environment tracking header for OpenAI usage monitoring
-            client = OpenAI(
-                api_key=api_key,
-                default_headers={
-                    "X-Environment": ENV,
-                    "X-User-Agent": f"MultiModalAIRetail/{app.version}/{ENV}"
-                }
-            )
-            resp = client.embeddings.create(model=emb_model, input=texts)
+            client = get_async_openai_client()
+            resp = await client.embeddings.create(model=emb_model, input=texts)
             vecs = [np.array(item.embedding, dtype=np.float32) for item in resp.data]
         except Exception as e:
             logger.exception("Embeddings failed: %s", e)
@@ -1728,19 +1745,13 @@ async def image_extract(
 
     # Call OpenAI Vision API
     try:
-        logger.info(f"Initializing OpenAI client for image analysis (user {user_id})")
-        client = OpenAI(
-            api_key=api_key,
-            default_headers={
-                "X-Environment": ENV,
-                "X-User-Agent": f"VoiceOffers/{app.version}/{ENV}"
-            }
-        )
+        logger.info(f"Initializing async OpenAI client for image analysis (user {user_id})")
+        client = get_async_openai_client()
 
         t_api_start = time.time()
-        logger.info(f"Calling OpenAI Vision API for user {user_id}")
+        logger.info(f"Calling OpenAI Vision API (async) for user {user_id}")
 
-        response = client.chat.completions.create(
+        response = await client.chat.completions.create(
             model="gpt-4o",
             messages=[
                 {

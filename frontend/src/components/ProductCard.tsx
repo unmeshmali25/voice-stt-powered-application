@@ -3,7 +3,7 @@ import { Product } from '../types/retail'
 import { Star, ShoppingCart, Loader2 } from 'lucide-react'
 import { Button } from './ui/button'
 import { useCart } from '../contexts/CartContext'
-import { useState } from 'react'
+import { useState, memo } from 'react'
 import { useStore } from '../contexts/StoreContext'
 import { toast } from 'sonner' // Assuming sonner is used for toasts, or I should use standard alert for now if not available
 
@@ -11,7 +11,7 @@ interface ProductCardProps {
   product: Product
 }
 
-export function ProductCard({ product }: ProductCardProps) {
+export const ProductCard = memo(function ProductCard({ product }: ProductCardProps) {
   const { addToCart } = useCart()
   const { selectedStore } = useStore()
   const [isAdding, setIsAdding] = useState(false)
@@ -108,4 +108,4 @@ export function ProductCard({ product }: ProductCardProps) {
       </CardFooter>
     </Card>
   )
-}
+})

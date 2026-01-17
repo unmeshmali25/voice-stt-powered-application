@@ -16,6 +16,7 @@ B-22: Coupon stacking logic (integrated)
 
 import logging
 from typing import Dict, Any, List, Optional
+from collections import defaultdict
 from decimal import Decimal
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Query, Header
@@ -1047,6 +1048,19 @@ async def get_cart_summary(
             elif c[1] == 'brand':
                 brand_coupons.append(coupon_data)
 
+        # Pre-index coupons by category/brand for O(1) lookup instead of O(n) loop
+        category_coupon_map = defaultdict(list)
+        for coupon in category_coupons:
+            key = coupon["category_or_brand"]
+            if key:
+                category_coupon_map[key].append(coupon)
+
+        brand_coupon_map = defaultdict(list)
+        for coupon in brand_coupons:
+            key = coupon["category_or_brand"]
+            if key:
+                brand_coupon_map[key].append(coupon)
+
         # Calculate subtotal and item-level discounts
         subtotal = Decimal('0')
         item_discounts = []
@@ -1068,22 +1082,21 @@ async def get_cart_summary(
             best_discount = Decimal('0')
             best_coupon = None
 
-            # Check category coupons (only if category not already used)
-            for coupon in category_coupons:
-                if coupon["category_or_brand"] == category and category not in categories_with_discount:
+            # Check category coupons using O(1) lookup (only if category not already used)
+            if category not in categories_with_discount:
+                for coupon in category_coupon_map.get(category, []):
                     discount = calculate_discount(coupon, line_total)
                     if discount > best_discount:
                         best_discount = discount
                         best_coupon = coupon
 
-            # Check brand coupons (only if no category coupon applied)
+            # Check brand coupons using O(1) lookup (only if no category coupon applied)
             if not best_coupon:
-                for coupon in brand_coupons:
-                    if coupon["category_or_brand"] == brand:
-                        discount = calculate_discount(coupon, line_total)
-                        if discount > best_discount:
-                            best_discount = discount
-                            best_coupon = coupon
+                for coupon in brand_coupon_map.get(brand, []):
+                    discount = calculate_discount(coupon, line_total)
+                    if discount > best_discount:
+                        best_discount = discount
+                        best_coupon = coupon
 
             if best_coupon and best_discount > 0:
                 if best_coupon["type"] == "category":
