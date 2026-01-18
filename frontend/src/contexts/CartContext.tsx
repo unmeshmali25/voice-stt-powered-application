@@ -170,7 +170,19 @@ export function CartProvider({ children }: { children: ReactNode }) {
       });
 
       if (!response.ok) throw new Error('Failed to add coupon');
-      await fetchCart();
+
+      const data = await response.json();
+
+      // Use response data directly - no additional API calls needed
+      if (data.summary) {
+        setSummary(data.summary);
+      }
+      if (data.eligible) {
+        setEligibleCoupons(data.eligible);
+      }
+      if (data.ineligible) {
+        setIneligibleCoupons(data.ineligible);
+      }
     } catch (error) {
       console.error('Error adding coupon:', error);
       throw error;
@@ -187,7 +199,19 @@ export function CartProvider({ children }: { children: ReactNode }) {
       });
 
       if (!response.ok) throw new Error('Failed to remove coupon');
-      await fetchCart();
+
+      const data = await response.json();
+
+      // Use response data directly - no additional API calls needed
+      if (data.summary) {
+        setSummary(data.summary);
+      }
+      if (data.eligible) {
+        setEligibleCoupons(data.eligible);
+      }
+      if (data.ineligible) {
+        setIneligibleCoupons(data.ineligible);
+      }
     } catch (error) {
       console.error('Error removing coupon:', error);
       throw error;

@@ -109,6 +109,245 @@ def check_inventory(db: Session, store_id: str, product_id: str, quantity: int) 
     return row and row[0] >= quantity
 
 
+def _calc_discount(coupon_row, amount: Decimal) -> Decimal:
+    """Calculate discount for a coupon. coupon_row format: (id, type, details, cat_brand, dtype, dvalue, min, max)"""
+    dtype = coupon_row[4]  # discount_type
+    dvalue = Decimal(str(coupon_row[5])) if coupon_row[5] else Decimal('0')
+    max_disc = Decimal(str(coupon_row[7])) if coupon_row[7] else None
+
+    if dtype == 'percent':
+        disc = amount * (dvalue / 100)
+        if max_disc:
+            disc = min(disc, max_disc)
+        return disc
+    elif dtype == 'fixed':
+        return min(dvalue, amount)
+    elif dtype == 'bogo':
+        return amount * Decimal('0.5') * (dvalue / 100)
+    return Decimal('0')
+
+
+def _calculate_cart_data_for_response(db: Session, user_id: str, store_id: str) -> dict:
+    """
+    Calculate summary and eligibility in one pass for coupon endpoints.
+    Returns dict with: summary, eligible, ineligible
+    """
+    # Get cart items with product details
+    items_result = db.execute(
+        text("""
+            SELECT
+                ci.id as cart_item_id,
+                ci.quantity,
+                p.id as product_id,
+                p.name as product_name,
+                p.price,
+                p.category,
+                p.brand
+            FROM cart_items ci
+            JOIN products p ON ci.product_id = p.id
+            WHERE ci.user_id = :user_id AND ci.store_id = :store_id
+        """),
+        {"user_id": user_id, "store_id": store_id}
+    )
+    items = items_result.fetchall()
+
+    if not items:
+        return {
+            "summary": {
+                "subtotal": 0,
+                "item_discounts": [],
+                "frontstore_discount": None,
+                "discount_total": 0,
+                "final_total": 0,
+                "savings_percentage": 0
+            },
+            "eligible": [],
+            "ineligible": []
+        }
+
+    # Build category/brand sets and calculate subtotal
+    cart_categories = set()
+    cart_brands = set()
+    subtotal = Decimal('0')
+
+    for item in items:
+        if item[5]:  # category
+            cart_categories.add(item[5].lower())
+        if item[6]:  # brand
+            cart_brands.add(item[6].lower())
+        subtotal += Decimal(str(item[4])) * item[1]  # price * quantity
+
+    # Get selected coupons
+    selected_result = db.execute(
+        text("""
+            SELECT c.id, c.type, c.discount_details, c.category_or_brand,
+                   c.discount_type, c.discount_value, c.min_purchase_amount, c.max_discount
+            FROM cart_coupons cc
+            JOIN coupons c ON cc.coupon_id = c.id
+            WHERE cc.user_id = :user_id
+        """),
+        {"user_id": user_id}
+    )
+    selected_coupons = selected_result.fetchall()
+    selected_ids = {str(row[0]) for row in selected_coupons}
+
+    # Get all user coupons for eligibility
+    all_coupons_result = db.execute(
+        text("""
+            SELECT c.id, c.type, c.discount_details, c.category_or_brand,
+                   c.expiration_date, c.terms, c.discount_type, c.discount_value,
+                   c.min_purchase_amount, c.max_discount
+            FROM coupons c
+            JOIN user_coupons uc ON c.id = uc.coupon_id
+            WHERE uc.user_id = :user_id
+              AND uc.eligible_until > NOW()
+              AND c.expiration_date > NOW()
+              AND (c.is_active IS NULL OR c.is_active = true)
+        """),
+        {"user_id": user_id}
+    )
+    all_coupons = all_coupons_result.fetchall()
+
+    # Calculate eligibility
+    eligible = []
+    ineligible = []
+
+    for row in all_coupons:
+        coupon = {
+            "id": str(row[0]),
+            "type": row[1],
+            "discount_details": row[2],
+            "category_or_brand": row[3],
+            "expiration_date": row[4].isoformat() if row[4] else None,
+            "terms": row[5],
+            "discount_type": row[6],
+            "discount_value": float(row[7]) if row[7] else 0,
+            "min_purchase_amount": float(row[8]) if row[8] else 0,
+            "max_discount": float(row[9]) if row[9] else None,
+            "is_selected": str(row[0]) in selected_ids
+        }
+
+        is_eligible = False
+        reason = None
+
+        if row[1] == 'frontstore':
+            min_amount = Decimal(str(row[8])) if row[8] else Decimal('0')
+            if subtotal >= min_amount:
+                is_eligible = True
+            else:
+                reason = f"Minimum purchase ${min_amount:.2f} required"
+        elif row[1] == 'category':
+            cat = (row[3] or '').lower()
+            if cat in cart_categories:
+                is_eligible = True
+            else:
+                reason = f"No {row[3]} products in cart"
+        elif row[1] == 'brand':
+            brand = (row[3] or '').lower()
+            if brand in cart_brands:
+                is_eligible = True
+            else:
+                reason = f"No {row[3]} products in cart"
+
+        if is_eligible:
+            eligible.append(coupon)
+        else:
+            coupon["ineligible_reason"] = reason
+            ineligible.append(coupon)
+
+    # Calculate discounts (simplified - use existing calculate_discount function)
+    item_discounts = []
+    discount_total = Decimal('0')
+    frontstore_discount = None
+
+    # Pre-index coupons
+    category_map = defaultdict(list)
+    brand_map = defaultdict(list)
+    frontstore_coupons = []
+
+    for row in selected_coupons:
+        coupon_type = row[1]
+        if coupon_type == 'frontstore':
+            frontstore_coupons.append(row)
+        elif coupon_type == 'category':
+            key = (row[3] or '').lower()
+            category_map[key].append(row)
+        elif coupon_type == 'brand':
+            key = (row[3] or '').lower()
+            brand_map[key].append(row)
+
+    # Apply item-level discounts
+    for item in items:
+        category = (item[5] or '').lower()
+        brand = (item[6] or '').lower()
+        item_price = Decimal(str(item[4])) * item[1]
+
+        best_discount = Decimal('0')
+        best_coupon = None
+
+        # Check category coupons
+        for coupon in category_map.get(category, []):
+            disc = _calc_discount(coupon, item_price)
+            if disc > best_discount:
+                best_discount = disc
+                best_coupon = coupon
+
+        # Check brand coupons if no category match
+        if not best_coupon:
+            for coupon in brand_map.get(brand, []):
+                disc = _calc_discount(coupon, item_price)
+                if disc > best_discount:
+                    best_discount = disc
+                    best_coupon = coupon
+
+        if best_coupon and best_discount > 0:
+            item_discounts.append({
+                "cart_item_id": str(item[0]),
+                "product_name": item[3],
+                "coupon_id": str(best_coupon[0]),
+                "coupon_details": best_coupon[2],
+                "discount_amount": float(best_discount)
+            })
+            discount_total += best_discount
+
+    # Apply frontstore discount
+    subtotal_after_items = subtotal - discount_total
+    if frontstore_coupons and subtotal_after_items > 0:
+        best_fs_disc = Decimal('0')
+        best_fs_coupon = None
+        for coupon in frontstore_coupons:
+            min_amt = Decimal(str(coupon[6])) if coupon[6] else Decimal('0')
+            if subtotal_after_items >= min_amt:
+                disc = _calc_discount(coupon, subtotal_after_items)
+                if disc > best_fs_disc:
+                    best_fs_disc = disc
+                    best_fs_coupon = coupon
+
+        if best_fs_coupon:
+            frontstore_discount = {
+                "coupon_id": str(best_fs_coupon[0]),
+                "coupon_details": best_fs_coupon[2],
+                "discount_amount": float(best_fs_disc)
+            }
+            discount_total += best_fs_disc
+
+    final_total = float(subtotal - discount_total)
+    savings_pct = float((discount_total / subtotal) * 100) if subtotal > 0 else 0
+
+    return {
+        "summary": {
+            "subtotal": float(subtotal),
+            "item_discounts": item_discounts,
+            "frontstore_discount": frontstore_discount,
+            "discount_total": float(discount_total),
+            "final_total": max(0, final_total),
+            "savings_percentage": round(savings_pct, 1)
+        },
+        "eligible": eligible,
+        "ineligible": ineligible
+    }
+
+
 # --- Routes ---
 
 @router.get("/cart")
@@ -862,10 +1101,21 @@ async def add_coupon_to_cart(
             "category_or_brand": coupon_row[3]
         }
 
+        # Calculate updated cart data in same request
+        store_id = get_user_store_id(db, user_id)
+        cart_data = _calculate_cart_data_for_response(db, user_id, store_id) if store_id else {
+            "summary": {"subtotal": 0, "item_discounts": [], "frontstore_discount": None, "discount_total": 0, "final_total": 0, "savings_percentage": 0},
+            "eligible": [],
+            "ineligible": []
+        }
+
         logger.info(f"User {user_id} added coupon {coupon_id} to cart")
         return JSONResponse({
             "success": True,
-            "coupon": coupon
+            "coupon": coupon,
+            "summary": cart_data["summary"],
+            "eligible": cart_data["eligible"],
+            "ineligible": cart_data["ineligible"]
         }, status_code=200)
 
     except HTTPException:
@@ -925,8 +1175,21 @@ async def remove_coupon_from_cart(
 
         db.commit()
 
+        # Calculate updated cart data in same request
+        store_id = get_user_store_id(db, user_id)
+        cart_data = _calculate_cart_data_for_response(db, user_id, store_id) if store_id else {
+            "summary": {"subtotal": 0, "item_discounts": [], "frontstore_discount": None, "discount_total": 0, "final_total": 0, "savings_percentage": 0},
+            "eligible": [],
+            "ineligible": []
+        }
+
         logger.info(f"User {user_id} removed coupon {coupon_id} from cart")
-        return JSONResponse({"success": True}, status_code=200)
+        return JSONResponse({
+            "success": True,
+            "summary": cart_data["summary"],
+            "eligible": cart_data["eligible"],
+            "ineligible": cart_data["ineligible"]
+        }, status_code=200)
 
     except Exception as e:
         logger.exception(f"Failed to remove coupon from cart for user {user_id}: {e}")
