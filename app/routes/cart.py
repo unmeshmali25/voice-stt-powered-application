@@ -38,6 +38,7 @@ from app.session_tracking import (
 
 # --- Pydantic Models ---
 
+
 class AddToCartRequest(BaseModel):
     product_id: str
     quantity: int = 1
@@ -73,24 +74,29 @@ def set_dependencies(db_dependency, token_dependency):
 def db_dep():
     """DB dependency wrapper that defers to the injected dependency at runtime."""
     if _db_dependency is None:
-        raise RuntimeError("DB dependency not configured. Did you call set_dependencies()?")
+        raise RuntimeError(
+            "DB dependency not configured. Did you call set_dependencies()?"
+        )
     yield from _db_dependency()
 
 
 def token_dep(authorization: str = Header(None)) -> Dict[str, Any]:
     """Auth dependency wrapper that defers to the injected dependency at runtime."""
     if _token_dependency is None:
-        raise RuntimeError("Token dependency not configured. Did you call set_dependencies()?")
+        raise RuntimeError(
+            "Token dependency not configured. Did you call set_dependencies()?"
+        )
     return _token_dependency(authorization)
 
 
 # --- Helper Functions ---
 
+
 def get_user_store_id(db: Session, user_id: str) -> Optional[str]:
     """Get user's selected store ID."""
     result = db.execute(
         text("SELECT selected_store_id FROM user_preferences WHERE user_id = :user_id"),
-        {"user_id": user_id}
+        {"user_id": user_id},
     )
     row = result.fetchone()
     return str(row[0]) if row and row[0] else None
@@ -103,7 +109,7 @@ def check_inventory(db: Session, store_id: str, product_id: str, quantity: int) 
             SELECT quantity FROM store_inventory
             WHERE store_id = :store_id AND product_id = :product_id
         """),
-        {"store_id": store_id, "product_id": product_id}
+        {"store_id": store_id, "product_id": product_id},
     )
     row = result.fetchone()
     return row and row[0] >= quantity
@@ -112,19 +118,19 @@ def check_inventory(db: Session, store_id: str, product_id: str, quantity: int) 
 def _calc_discount(coupon_row, amount: Decimal) -> Decimal:
     """Calculate discount for a coupon. coupon_row format: (id, type, details, cat_brand, dtype, dvalue, min, max)"""
     dtype = coupon_row[4]  # discount_type
-    dvalue = Decimal(str(coupon_row[5])) if coupon_row[5] else Decimal('0')
+    dvalue = Decimal(str(coupon_row[5])) if coupon_row[5] else Decimal("0")
     max_disc = Decimal(str(coupon_row[7])) if coupon_row[7] else None
 
-    if dtype == 'percent':
+    if dtype == "percent":
         disc = amount * (dvalue / 100)
         if max_disc:
             disc = min(disc, max_disc)
         return disc
-    elif dtype == 'fixed':
+    elif dtype == "fixed":
         return min(dvalue, amount)
-    elif dtype == 'bogo':
-        return amount * Decimal('0.5') * (dvalue / 100)
-    return Decimal('0')
+    elif dtype == "bogo":
+        return amount * Decimal("0.5") * (dvalue / 100)
+    return Decimal("0")
 
 
 def _calculate_cart_data_for_response(db: Session, user_id: str, store_id: str) -> dict:
@@ -147,7 +153,7 @@ def _calculate_cart_data_for_response(db: Session, user_id: str, store_id: str) 
             JOIN products p ON ci.product_id = p.id
             WHERE ci.user_id = :user_id AND ci.store_id = :store_id
         """),
-        {"user_id": user_id, "store_id": store_id}
+        {"user_id": user_id, "store_id": store_id},
     )
     items = items_result.fetchall()
 
@@ -159,16 +165,16 @@ def _calculate_cart_data_for_response(db: Session, user_id: str, store_id: str) 
                 "frontstore_discount": None,
                 "discount_total": 0,
                 "final_total": 0,
-                "savings_percentage": 0
+                "savings_percentage": 0,
             },
             "eligible": [],
-            "ineligible": []
+            "ineligible": [],
         }
 
     # Build category/brand sets and calculate subtotal
     cart_categories = set()
     cart_brands = set()
-    subtotal = Decimal('0')
+    subtotal = Decimal("0")
 
     for item in items:
         if item[5]:  # category
@@ -186,7 +192,7 @@ def _calculate_cart_data_for_response(db: Session, user_id: str, store_id: str) 
             JOIN coupons c ON cc.coupon_id = c.id
             WHERE cc.user_id = :user_id
         """),
-        {"user_id": user_id}
+        {"user_id": user_id},
     )
     selected_coupons = selected_result.fetchall()
     selected_ids = {str(row[0]) for row in selected_coupons}
@@ -204,7 +210,7 @@ def _calculate_cart_data_for_response(db: Session, user_id: str, store_id: str) 
               AND c.expiration_date > NOW()
               AND (c.is_active IS NULL OR c.is_active = true)
         """),
-        {"user_id": user_id}
+        {"user_id": user_id},
     )
     all_coupons = all_coupons_result.fetchall()
 
@@ -224,26 +230,26 @@ def _calculate_cart_data_for_response(db: Session, user_id: str, store_id: str) 
             "discount_value": float(row[7]) if row[7] else 0,
             "min_purchase_amount": float(row[8]) if row[8] else 0,
             "max_discount": float(row[9]) if row[9] else None,
-            "is_selected": str(row[0]) in selected_ids
+            "is_selected": str(row[0]) in selected_ids,
         }
 
         is_eligible = False
         reason = None
 
-        if row[1] == 'frontstore':
-            min_amount = Decimal(str(row[8])) if row[8] else Decimal('0')
+        if row[1] == "frontstore":
+            min_amount = Decimal(str(row[8])) if row[8] else Decimal("0")
             if subtotal >= min_amount:
                 is_eligible = True
             else:
                 reason = f"Minimum purchase ${min_amount:.2f} required"
-        elif row[1] == 'category':
-            cat = (row[3] or '').lower()
+        elif row[1] == "category":
+            cat = (row[3] or "").lower()
             if cat in cart_categories:
                 is_eligible = True
             else:
                 reason = f"No {row[3]} products in cart"
-        elif row[1] == 'brand':
-            brand = (row[3] or '').lower()
+        elif row[1] == "brand":
+            brand = (row[3] or "").lower()
             if brand in cart_brands:
                 is_eligible = True
             else:
@@ -257,7 +263,7 @@ def _calculate_cart_data_for_response(db: Session, user_id: str, store_id: str) 
 
     # Calculate discounts (simplified - use existing calculate_discount function)
     item_discounts = []
-    discount_total = Decimal('0')
+    discount_total = Decimal("0")
     frontstore_discount = None
 
     # Pre-index coupons
@@ -267,22 +273,22 @@ def _calculate_cart_data_for_response(db: Session, user_id: str, store_id: str) 
 
     for row in selected_coupons:
         coupon_type = row[1]
-        if coupon_type == 'frontstore':
+        if coupon_type == "frontstore":
             frontstore_coupons.append(row)
-        elif coupon_type == 'category':
-            key = (row[3] or '').lower()
+        elif coupon_type == "category":
+            key = (row[3] or "").lower()
             category_map[key].append(row)
-        elif coupon_type == 'brand':
-            key = (row[3] or '').lower()
+        elif coupon_type == "brand":
+            key = (row[3] or "").lower()
             brand_map[key].append(row)
 
     # Apply item-level discounts
     for item in items:
-        category = (item[5] or '').lower()
-        brand = (item[6] or '').lower()
+        category = (item[5] or "").lower()
+        brand = (item[6] or "").lower()
         item_price = Decimal(str(item[4])) * item[1]
 
-        best_discount = Decimal('0')
+        best_discount = Decimal("0")
         best_coupon = None
 
         # Check category coupons
@@ -301,22 +307,24 @@ def _calculate_cart_data_for_response(db: Session, user_id: str, store_id: str) 
                     best_coupon = coupon
 
         if best_coupon and best_discount > 0:
-            item_discounts.append({
-                "cart_item_id": str(item[0]),
-                "product_name": item[3],
-                "coupon_id": str(best_coupon[0]),
-                "coupon_details": best_coupon[2],
-                "discount_amount": float(best_discount)
-            })
+            item_discounts.append(
+                {
+                    "cart_item_id": str(item[0]),
+                    "product_name": item[3],
+                    "coupon_id": str(best_coupon[0]),
+                    "coupon_details": best_coupon[2],
+                    "discount_amount": float(best_discount),
+                }
+            )
             discount_total += best_discount
 
     # Apply frontstore discount
     subtotal_after_items = subtotal - discount_total
     if frontstore_coupons and subtotal_after_items > 0:
-        best_fs_disc = Decimal('0')
+        best_fs_disc = Decimal("0")
         best_fs_coupon = None
         for coupon in frontstore_coupons:
-            min_amt = Decimal(str(coupon[6])) if coupon[6] else Decimal('0')
+            min_amt = Decimal(str(coupon[6])) if coupon[6] else Decimal("0")
             if subtotal_after_items >= min_amt:
                 disc = _calc_discount(coupon, subtotal_after_items)
                 if disc > best_fs_disc:
@@ -327,7 +335,7 @@ def _calculate_cart_data_for_response(db: Session, user_id: str, store_id: str) 
             frontstore_discount = {
                 "coupon_id": str(best_fs_coupon[0]),
                 "coupon_details": best_fs_coupon[2],
-                "discount_amount": float(best_fs_disc)
+                "discount_amount": float(best_fs_disc),
             }
             discount_total += best_fs_disc
 
@@ -341,19 +349,19 @@ def _calculate_cart_data_for_response(db: Session, user_id: str, store_id: str) 
             "frontstore_discount": frontstore_discount,
             "discount_total": float(discount_total),
             "final_total": max(0, final_total),
-            "savings_percentage": round(savings_pct, 1)
+            "savings_percentage": round(savings_pct, 1),
         },
         "eligible": eligible,
-        "ineligible": ineligible
+        "ineligible": ineligible,
     }
 
 
 # --- Routes ---
 
+
 @router.get("/cart")
 async def get_cart(
-    user: Dict[str, Any] = Depends(token_dep),
-    db: Session = Depends(db_dep)
+    user: Dict[str, Any] = Depends(token_dep), db: Session = Depends(db_dep)
 ) -> JSONResponse:
     """
     B-8: Get user's cart items with product details and selected coupons.
@@ -366,18 +374,21 @@ async def get_cart(
         store_id = get_user_store_id(db, user_id)
 
         if not store_id:
-            return JSONResponse({
-                "items": [],
-                "coupons": [],
-                "store": None,
-                "item_count": 0,
-                "message": "no_store_selected"
-            }, status_code=200)
+            return JSONResponse(
+                {
+                    "items": [],
+                    "coupons": [],
+                    "store": None,
+                    "item_count": 0,
+                    "message": "no_store_selected",
+                },
+                status_code=200,
+            )
 
         # Get store info
         store_result = db.execute(
             text("SELECT id, name FROM stores WHERE id = :store_id"),
-            {"store_id": store_id}
+            {"store_id": store_id},
         )
         store_row = store_result.fetchone()
         store = {"id": str(store_row[0]), "name": store_row[1]} if store_row else None
@@ -406,31 +417,33 @@ async def get_cart(
                 WHERE ci.user_id = :user_id AND ci.store_id = :store_id
                 ORDER BY ci.created_at DESC
             """),
-            {"user_id": user_id, "store_id": store_id}
+            {"user_id": user_id, "store_id": store_id},
         )
         rows = result.fetchall()
 
         items = []
         for row in rows:
-            items.append({
-                "cart_item_id": str(row[0]),
-                "quantity": row[1],
-                "added_at": row[2].isoformat() if row[2] else None,
-                "product": {
-                    "id": str(row[3]),
-                    "name": row[4],
-                    "description": row[5],
-                    "image_url": row[6],
-                    "price": float(row[7]) if row[7] else 0.0,
-                    "rating": float(row[8]) if row[8] else None,
-                    "review_count": row[9] or 0,
-                    "category": row[10],
-                    "brand": row[11],
-                    "promo_text": row[12]
-                },
-                "available_quantity": row[13] or 0,
-                "line_total": float(row[7] * row[1]) if row[7] else 0.0
-            })
+            items.append(
+                {
+                    "cart_item_id": str(row[0]),
+                    "quantity": row[1],
+                    "added_at": row[2].isoformat() if row[2] else None,
+                    "product": {
+                        "id": str(row[3]),
+                        "name": row[4],
+                        "description": row[5],
+                        "image_url": row[6],
+                        "price": float(row[7]) if row[7] else 0.0,
+                        "rating": float(row[8]) if row[8] else None,
+                        "review_count": row[9] or 0,
+                        "category": row[10],
+                        "brand": row[11],
+                        "promo_text": row[12],
+                    },
+                    "available_quantity": row[13] or 0,
+                    "line_total": float(row[7] * row[1]) if row[7] else 0.0,
+                }
+            )
 
         # Get selected coupons
         coupon_result = db.execute(
@@ -451,7 +464,7 @@ async def get_cart(
                 WHERE cc.user_id = :user_id
                 ORDER BY c.type, c.created_at
             """),
-            {"user_id": user_id}
+            {"user_id": user_id},
         )
         coupon_rows = coupon_result.fetchall()
 
@@ -466,26 +479,31 @@ async def get_cart(
                 "discount_type": row[6],
                 "discount_value": float(row[7]) if row[7] else 0,
                 "min_purchase_amount": float(row[8]) if row[8] else 0,
-                "max_discount": float(row[9]) if row[9] else None
+                "max_discount": float(row[9]) if row[9] else None,
             }
             for row in coupon_rows
         ]
 
         item_count = sum(item["quantity"] for item in items)
 
-        logger.info(f"User {user_id} cart: {len(items)} products, {item_count} items, {len(coupons)} coupons")
-        return JSONResponse({
-            "items": items,
-            "coupons": coupons,
-            "store": store,
-            "item_count": item_count
-        }, status_code=200)
+        logger.info(
+            f"User {user_id} cart: {len(items)} products, {item_count} items, {len(coupons)} coupons"
+        )
+        return JSONResponse(
+            {
+                "items": items,
+                "coupons": coupons,
+                "store": store,
+                "item_count": item_count,
+            },
+            status_code=200,
+        )
 
     except Exception as e:
         logger.exception(f"Failed to get cart for user {user_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get cart: {str(e)}"
+            detail=f"Failed to get cart: {str(e)}",
         )
 
 
@@ -494,7 +512,7 @@ async def add_to_cart(
     request: AddToCartRequest,
     http_request: Request,
     user: Dict[str, Any] = Depends(token_dep),
-    db: Session = Depends(db_dep)
+    db: Session = Depends(db_dep),
 ) -> JSONResponse:
     """
     B-9: Add item to cart.
@@ -510,13 +528,13 @@ async def add_to_cart(
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid product ID format: {product_id}"
+            detail=f"Invalid product ID format: {product_id}",
         )
 
     if quantity < 1:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Quantity must be at least 1"
+            detail="Quantity must be at least 1",
         )
 
     try:
@@ -526,27 +544,26 @@ async def add_to_cart(
         if not store_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Please select a store first"
+                detail="Please select a store first",
             )
 
         # Verify product exists
         product_result = db.execute(
             text("SELECT id, name, price FROM products WHERE id = :product_id"),
-            {"product_id": product_id}
+            {"product_id": product_id},
         )
         product_row = product_result.fetchone()
 
         if not product_row:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Product not found: {product_id}"
+                detail=f"Product not found: {product_id}",
             )
 
         # Check inventory
         if not check_inventory(db, store_id, product_id, quantity):
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Insufficient inventory"
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Insufficient inventory"
             )
 
         # Add or update cart item
@@ -563,8 +580,8 @@ async def add_to_cart(
                 "user_id": user_id,
                 "store_id": store_id,
                 "product_id": product_id,
-                "quantity": quantity
-            }
+                "quantity": quantity,
+            },
         )
 
         # Session event tracking (best-effort inside transaction)
@@ -581,7 +598,11 @@ async def add_to_cart(
                 session_id=session_id,
                 user_id=user_id,
                 event_type="cart_add_item",
-                payload={"product_id": product_id, "quantity": quantity, "store_id": store_id},
+                payload={
+                    "product_id": product_id,
+                    "quantity": quantity,
+                    "store_id": store_id,
+                },
             )
 
         db.commit()
@@ -596,7 +617,7 @@ async def add_to_cart(
                   AND ci.store_id = :store_id
                   AND ci.product_id = :product_id
             """),
-            {"user_id": user_id, "store_id": store_id, "product_id": product_id}
+            {"user_id": user_id, "store_id": store_id, "product_id": product_id},
         )
         row = result.fetchone()
 
@@ -605,14 +626,11 @@ async def add_to_cart(
             "quantity": row[1],
             "product_name": row[2],
             "unit_price": float(row[3]) if row[3] else 0,
-            "line_total": float(row[3] * row[1]) if row[3] else 0
+            "line_total": float(row[3] * row[1]) if row[3] else 0,
         }
 
         logger.info(f"User {user_id} added {quantity}x {product_row[1]} to cart")
-        return JSONResponse({
-            "success": True,
-            "cart_item": cart_item
-        }, status_code=200)
+        return JSONResponse({"success": True, "cart_item": cart_item}, status_code=200)
 
     except HTTPException:
         raise
@@ -621,7 +639,7 @@ async def add_to_cart(
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to add to cart: {str(e)}"
+            detail=f"Failed to add to cart: {str(e)}",
         )
 
 
@@ -631,7 +649,7 @@ async def update_cart_item(
     request: UpdateCartItemRequest,
     http_request: Request,
     user: Dict[str, Any] = Depends(token_dep),
-    db: Session = Depends(db_dep)
+    db: Session = Depends(db_dep),
 ) -> JSONResponse:
     """
     B-10: Update cart item quantity.
@@ -643,7 +661,7 @@ async def update_cart_item(
     if quantity < 1:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Quantity must be at least 1"
+            detail="Quantity must be at least 1",
         )
 
     try:
@@ -655,14 +673,13 @@ async def update_cart_item(
                 JOIN products p ON ci.product_id = p.id
                 WHERE ci.id = :item_id AND ci.user_id = :user_id
             """),
-            {"item_id": item_id, "user_id": user_id}
+            {"item_id": item_id, "user_id": user_id},
         )
         row = result.fetchone()
 
         if not row:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Cart item not found"
+                status_code=status.HTTP_404_NOT_FOUND, detail="Cart item not found"
             )
 
         store_id = str(row[1])
@@ -672,7 +689,7 @@ async def update_cart_item(
         if not check_inventory(db, store_id, product_id, quantity):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Insufficient inventory for requested quantity"
+                detail="Insufficient inventory for requested quantity",
             )
 
         # Update quantity
@@ -682,7 +699,7 @@ async def update_cart_item(
                 SET quantity = :quantity, updated_at = CURRENT_TIMESTAMP
                 WHERE id = :item_id AND user_id = :user_id
             """),
-            {"quantity": quantity, "item_id": item_id, "user_id": user_id}
+            {"quantity": quantity, "item_id": item_id, "user_id": user_id},
         )
 
         session_id = get_shopping_session_id(http_request)
@@ -711,7 +728,7 @@ async def update_cart_item(
                 JOIN products p ON ci.product_id = p.id
                 WHERE ci.id = :item_id
             """),
-            {"item_id": item_id}
+            {"item_id": item_id},
         )
         updated_row = result.fetchone()
 
@@ -720,14 +737,15 @@ async def update_cart_item(
             "quantity": updated_row[1],
             "product_name": updated_row[2],
             "unit_price": float(updated_row[3]) if updated_row[3] else 0,
-            "line_total": float(updated_row[3] * updated_row[1]) if updated_row[3] else 0
+            "line_total": float(updated_row[3] * updated_row[1])
+            if updated_row[3]
+            else 0,
         }
 
-        logger.info(f"User {user_id} updated cart item {item_id} to quantity {quantity}")
-        return JSONResponse({
-            "success": True,
-            "cart_item": cart_item
-        }, status_code=200)
+        logger.info(
+            f"User {user_id} updated cart item {item_id} to quantity {quantity}"
+        )
+        return JSONResponse({"success": True, "cart_item": cart_item}, status_code=200)
 
     except HTTPException:
         raise
@@ -736,7 +754,7 @@ async def update_cart_item(
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update cart item: {str(e)}"
+            detail=f"Failed to update cart item: {str(e)}",
         )
 
 
@@ -745,7 +763,7 @@ async def remove_cart_item(
     item_id: str,
     http_request: Request,
     user: Dict[str, Any] = Depends(token_dep),
-    db: Session = Depends(db_dep)
+    db: Session = Depends(db_dep),
 ) -> JSONResponse:
     """
     B-11: Remove item from cart.
@@ -756,18 +774,19 @@ async def remove_cart_item(
     try:
         # Verify item belongs to user
         result = db.execute(
-            text("SELECT id FROM cart_items WHERE id = :item_id AND user_id = :user_id"),
-            {"item_id": item_id, "user_id": user_id}
+            text(
+                "SELECT id FROM cart_items WHERE id = :item_id AND user_id = :user_id"
+            ),
+            {"item_id": item_id, "user_id": user_id},
         )
         if not result.fetchone():
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Cart item not found"
+                status_code=status.HTTP_404_NOT_FOUND, detail="Cart item not found"
             )
 
         db.execute(
             text("DELETE FROM cart_items WHERE id = :item_id AND user_id = :user_id"),
-            {"item_id": item_id, "user_id": user_id}
+            {"item_id": item_id, "user_id": user_id},
         )
 
         session_id = get_shopping_session_id(http_request)
@@ -798,7 +817,7 @@ async def remove_cart_item(
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to remove cart item: {str(e)}"
+            detail=f"Failed to remove cart item: {str(e)}",
         )
 
 
@@ -806,7 +825,7 @@ async def remove_cart_item(
 async def clear_cart(
     http_request: Request,
     user: Dict[str, Any] = Depends(token_dep),
-    db: Session = Depends(db_dep)
+    db: Session = Depends(db_dep),
 ) -> JSONResponse:
     """
     B-12: Clear entire cart (items and coupons).
@@ -818,24 +837,24 @@ async def clear_cart(
         # Count items before delete
         items_result = db.execute(
             text("SELECT COUNT(*) FROM cart_items WHERE user_id = :user_id"),
-            {"user_id": user_id}
+            {"user_id": user_id},
         )
         items_count = items_result.scalar() or 0
 
         coupons_result = db.execute(
             text("SELECT COUNT(*) FROM cart_coupons WHERE user_id = :user_id"),
-            {"user_id": user_id}
+            {"user_id": user_id},
         )
         coupons_count = coupons_result.scalar() or 0
 
         # Delete items and coupons
         db.execute(
             text("DELETE FROM cart_items WHERE user_id = :user_id"),
-            {"user_id": user_id}
+            {"user_id": user_id},
         )
         db.execute(
             text("DELETE FROM cart_coupons WHERE user_id = :user_id"),
-            {"user_id": user_id}
+            {"user_id": user_id},
         )
 
         session_id = get_shopping_session_id(http_request)
@@ -851,31 +870,38 @@ async def clear_cart(
                 session_id=session_id,
                 user_id=user_id,
                 event_type="cart_clear",
-                payload={"items_removed": int(items_count), "coupons_removed": int(coupons_count)},
+                payload={
+                    "items_removed": int(items_count),
+                    "coupons_removed": int(coupons_count),
+                },
             )
 
         db.commit()
 
-        logger.info(f"User {user_id} cleared cart: {items_count} items, {coupons_count} coupons")
-        return JSONResponse({
-            "success": True,
-            "items_removed": items_count,
-            "coupons_removed": coupons_count
-        }, status_code=200)
+        logger.info(
+            f"User {user_id} cleared cart: {items_count} items, {coupons_count} coupons"
+        )
+        return JSONResponse(
+            {
+                "success": True,
+                "items_removed": items_count,
+                "coupons_removed": coupons_count,
+            },
+            status_code=200,
+        )
 
     except Exception as e:
         logger.exception(f"Failed to clear cart for user {user_id}: {e}")
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to clear cart: {str(e)}"
+            detail=f"Failed to clear cart: {str(e)}",
         )
 
 
 @router.get("/coupons/eligible")
 async def get_eligible_coupons(
-    user: Dict[str, Any] = Depends(token_dep),
-    db: Session = Depends(db_dep)
+    user: Dict[str, Any] = Depends(token_dep), db: Session = Depends(db_dep)
 ) -> JSONResponse:
     """
     B-14: Get coupons eligible for current cart.
@@ -888,11 +914,10 @@ async def get_eligible_coupons(
         # Get cart contents
         store_id = get_user_store_id(db, user_id)
         if not store_id:
-            return JSONResponse({
-                "eligible": [],
-                "ineligible": [],
-                "message": "no_store_selected"
-            }, status_code=200)
+            return JSONResponse(
+                {"eligible": [], "ineligible": [], "message": "no_store_selected"},
+                status_code=200,
+            )
 
         # Get cart items with categories and brands
         cart_result = db.execute(
@@ -906,20 +931,20 @@ async def get_eligible_coupons(
                 WHERE ci.user_id = :user_id AND ci.store_id = :store_id
                 GROUP BY p.category, p.brand
             """),
-            {"user_id": user_id, "store_id": store_id}
+            {"user_id": user_id, "store_id": store_id},
         )
         cart_rows = cart_result.fetchall()
 
         cart_categories = set()
         cart_brands = set()
-        cart_subtotal = Decimal('0')
+        cart_subtotal = Decimal("0")
 
         for row in cart_rows:
             if row[0]:
                 cart_categories.add(row[0].lower())
             if row[1]:
                 cart_brands.add(row[1].lower())
-            cart_subtotal += Decimal(str(row[2])) if row[2] else Decimal('0')
+            cart_subtotal += Decimal(str(row[2])) if row[2] else Decimal("0")
 
         # Get user's coupons
         coupon_result = db.execute(
@@ -941,16 +966,23 @@ async def get_eligible_coupons(
                   AND uc.eligible_until > NOW()
                   AND c.expiration_date > NOW()
                   AND (c.is_active IS NULL OR c.is_active = true)
-                ORDER BY c.type, c.discount_value DESC NULLS LAST
+                ORDER BY
+                    CASE c.type
+                        WHEN 'frontstore' THEN 1
+                        WHEN 'category' THEN 2
+                        WHEN 'brand' THEN 3
+                        ELSE 4
+                    END,
+                    c.discount_value DESC NULLS LAST
             """),
-            {"user_id": user_id}
+            {"user_id": user_id},
         )
         coupon_rows = coupon_result.fetchall()
 
         # Get already selected coupons
         selected_result = db.execute(
             text("SELECT coupon_id FROM cart_coupons WHERE user_id = :user_id"),
-            {"user_id": user_id}
+            {"user_id": user_id},
         )
         selected_ids = {str(row[0]) for row in selected_result.fetchall()}
 
@@ -969,32 +1001,32 @@ async def get_eligible_coupons(
                 "discount_value": float(row[7]) if row[7] else 0,
                 "min_purchase_amount": float(row[8]) if row[8] else 0,
                 "max_discount": float(row[9]) if row[9] else None,
-                "is_selected": str(row[0]) in selected_ids
+                "is_selected": str(row[0]) in selected_ids,
             }
 
             is_eligible = False
             reason = None
 
             # Check eligibility based on type
-            if row[1] == 'frontstore':
+            if row[1] == "frontstore":
                 # Frontstore: check minimum purchase amount
-                min_amount = Decimal(str(row[8])) if row[8] else Decimal('0')
+                min_amount = Decimal(str(row[8])) if row[8] else Decimal("0")
                 if cart_subtotal >= min_amount:
                     is_eligible = True
                 else:
                     reason = f"Minimum purchase ${min_amount:.2f} required"
 
-            elif row[1] == 'category':
+            elif row[1] == "category":
                 # Category: check if cart contains matching category
-                cat_or_brand = (row[3] or '').lower()
+                cat_or_brand = (row[3] or "").lower()
                 if cat_or_brand in cart_categories:
                     is_eligible = True
                 else:
                     reason = f"No {row[3]} products in cart"
 
-            elif row[1] == 'brand':
+            elif row[1] == "brand":
                 # Brand: check if cart contains matching brand
-                cat_or_brand = (row[3] or '').lower()
+                cat_or_brand = (row[3] or "").lower()
                 if cat_or_brand in cart_brands:
                     is_eligible = True
                 else:
@@ -1006,18 +1038,23 @@ async def get_eligible_coupons(
                 coupon["ineligible_reason"] = reason
                 ineligible.append(coupon)
 
-        logger.info(f"User {user_id}: {len(eligible)} eligible, {len(ineligible)} ineligible coupons")
-        return JSONResponse({
-            "eligible": eligible,
-            "ineligible": ineligible,
-            "cart_subtotal": float(cart_subtotal)
-        }, status_code=200)
+        logger.info(
+            f"User {user_id}: {len(eligible)} eligible, {len(ineligible)} ineligible coupons"
+        )
+        return JSONResponse(
+            {
+                "eligible": eligible,
+                "ineligible": ineligible,
+                "cart_subtotal": float(cart_subtotal),
+            },
+            status_code=200,
+        )
 
     except Exception as e:
         logger.exception(f"Failed to get eligible coupons for user {user_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get eligible coupons: {str(e)}"
+            detail=f"Failed to get eligible coupons: {str(e)}",
         )
 
 
@@ -1026,7 +1063,7 @@ async def add_coupon_to_cart(
     request: AddCouponRequest,
     http_request: Request,
     user: Dict[str, Any] = Depends(token_dep),
-    db: Session = Depends(db_dep)
+    db: Session = Depends(db_dep),
 ) -> JSONResponse:
     """
     B-15: Add coupon to cart (user selection).
@@ -1047,14 +1084,14 @@ async def add_coupon_to_cart(
                   AND uc.eligible_until > NOW()
                   AND c.expiration_date > NOW()
             """),
-            {"coupon_id": coupon_id, "user_id": user_id}
+            {"coupon_id": coupon_id, "user_id": user_id},
         )
         coupon_row = result.fetchone()
 
         if not coupon_row:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Coupon not found or not assigned to you"
+                detail="Coupon not found or not assigned to you",
             )
 
         # Add to cart_coupons
@@ -1064,7 +1101,7 @@ async def add_coupon_to_cart(
                 VALUES (:user_id, :coupon_id)
                 ON CONFLICT (user_id, coupon_id) DO NOTHING
             """),
-            {"user_id": user_id, "coupon_id": coupon_id}
+            {"user_id": user_id, "coupon_id": coupon_id},
         )
 
         # Track interaction
@@ -1073,7 +1110,7 @@ async def add_coupon_to_cart(
                 INSERT INTO coupon_interactions (user_id, coupon_id, action)
                 VALUES (:user_id, :coupon_id, 'added_to_cart')
             """),
-            {"user_id": user_id, "coupon_id": coupon_id}
+            {"user_id": user_id, "coupon_id": coupon_id},
         )
 
         session_id = get_shopping_session_id(http_request)
@@ -1098,25 +1135,39 @@ async def add_coupon_to_cart(
             "id": str(coupon_row[0]),
             "type": coupon_row[1],
             "discount_details": coupon_row[2],
-            "category_or_brand": coupon_row[3]
+            "category_or_brand": coupon_row[3],
         }
 
         # Calculate updated cart data in same request
         store_id = get_user_store_id(db, user_id)
-        cart_data = _calculate_cart_data_for_response(db, user_id, store_id) if store_id else {
-            "summary": {"subtotal": 0, "item_discounts": [], "frontstore_discount": None, "discount_total": 0, "final_total": 0, "savings_percentage": 0},
-            "eligible": [],
-            "ineligible": []
-        }
+        cart_data = (
+            _calculate_cart_data_for_response(db, user_id, store_id)
+            if store_id
+            else {
+                "summary": {
+                    "subtotal": 0,
+                    "item_discounts": [],
+                    "frontstore_discount": None,
+                    "discount_total": 0,
+                    "final_total": 0,
+                    "savings_percentage": 0,
+                },
+                "eligible": [],
+                "ineligible": [],
+            }
+        )
 
         logger.info(f"User {user_id} added coupon {coupon_id} to cart")
-        return JSONResponse({
-            "success": True,
-            "coupon": coupon,
-            "summary": cart_data["summary"],
-            "eligible": cart_data["eligible"],
-            "ineligible": cart_data["ineligible"]
-        }, status_code=200)
+        return JSONResponse(
+            {
+                "success": True,
+                "coupon": coupon,
+                "summary": cart_data["summary"],
+                "eligible": cart_data["eligible"],
+                "ineligible": cart_data["ineligible"],
+            },
+            status_code=200,
+        )
 
     except HTTPException:
         raise
@@ -1125,7 +1176,7 @@ async def add_coupon_to_cart(
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to add coupon to cart: {str(e)}"
+            detail=f"Failed to add coupon to cart: {str(e)}",
         )
 
 
@@ -1134,7 +1185,7 @@ async def remove_coupon_from_cart(
     coupon_id: str,
     http_request: Request,
     user: Dict[str, Any] = Depends(token_dep),
-    db: Session = Depends(db_dep)
+    db: Session = Depends(db_dep),
 ) -> JSONResponse:
     """
     B-16: Remove coupon from cart.
@@ -1149,12 +1200,14 @@ async def remove_coupon_from_cart(
                 INSERT INTO coupon_interactions (user_id, coupon_id, action)
                 VALUES (:user_id, :coupon_id, 'removed_from_cart')
             """),
-            {"user_id": user_id, "coupon_id": coupon_id}
+            {"user_id": user_id, "coupon_id": coupon_id},
         )
 
         db.execute(
-            text("DELETE FROM cart_coupons WHERE user_id = :user_id AND coupon_id = :coupon_id"),
-            {"user_id": user_id, "coupon_id": coupon_id}
+            text(
+                "DELETE FROM cart_coupons WHERE user_id = :user_id AND coupon_id = :coupon_id"
+            ),
+            {"user_id": user_id, "coupon_id": coupon_id},
         )
 
         session_id = get_shopping_session_id(http_request)
@@ -1177,33 +1230,46 @@ async def remove_coupon_from_cart(
 
         # Calculate updated cart data in same request
         store_id = get_user_store_id(db, user_id)
-        cart_data = _calculate_cart_data_for_response(db, user_id, store_id) if store_id else {
-            "summary": {"subtotal": 0, "item_discounts": [], "frontstore_discount": None, "discount_total": 0, "final_total": 0, "savings_percentage": 0},
-            "eligible": [],
-            "ineligible": []
-        }
+        cart_data = (
+            _calculate_cart_data_for_response(db, user_id, store_id)
+            if store_id
+            else {
+                "summary": {
+                    "subtotal": 0,
+                    "item_discounts": [],
+                    "frontstore_discount": None,
+                    "discount_total": 0,
+                    "final_total": 0,
+                    "savings_percentage": 0,
+                },
+                "eligible": [],
+                "ineligible": [],
+            }
+        )
 
         logger.info(f"User {user_id} removed coupon {coupon_id} from cart")
-        return JSONResponse({
-            "success": True,
-            "summary": cart_data["summary"],
-            "eligible": cart_data["eligible"],
-            "ineligible": cart_data["ineligible"]
-        }, status_code=200)
+        return JSONResponse(
+            {
+                "success": True,
+                "summary": cart_data["summary"],
+                "eligible": cart_data["eligible"],
+                "ineligible": cart_data["ineligible"],
+            },
+            status_code=200,
+        )
 
     except Exception as e:
         logger.exception(f"Failed to remove coupon from cart for user {user_id}: {e}")
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to remove coupon from cart: {str(e)}"
+            detail=f"Failed to remove coupon from cart: {str(e)}",
         )
 
 
 @router.get("/cart/summary")
 async def get_cart_summary(
-    user: Dict[str, Any] = Depends(token_dep),
-    db: Session = Depends(db_dep)
+    user: Dict[str, Any] = Depends(token_dep), db: Session = Depends(db_dep)
 ) -> JSONResponse:
     """
     B-17: Calculate cart totals with coupon stacking logic (B-22).
@@ -1228,15 +1294,18 @@ async def get_cart_summary(
     try:
         store_id = get_user_store_id(db, user_id)
         if not store_id:
-            return JSONResponse({
-                "subtotal": 0,
-                "item_discounts": [],
-                "frontstore_discount": None,
-                "discount_total": 0,
-                "final_total": 0,
-                "savings_percentage": 0,
-                "message": "no_store_selected"
-            }, status_code=200)
+            return JSONResponse(
+                {
+                    "subtotal": 0,
+                    "item_discounts": [],
+                    "frontstore_discount": None,
+                    "discount_total": 0,
+                    "final_total": 0,
+                    "savings_percentage": 0,
+                    "message": "no_store_selected",
+                },
+                status_code=200,
+            )
 
         # Get cart items
         items_result = db.execute(
@@ -1253,20 +1322,23 @@ async def get_cart_summary(
                 JOIN products p ON ci.product_id = p.id
                 WHERE ci.user_id = :user_id AND ci.store_id = :store_id
             """),
-            {"user_id": user_id, "store_id": store_id}
+            {"user_id": user_id, "store_id": store_id},
         )
         items = items_result.fetchall()
 
         if not items:
-            return JSONResponse({
-                "subtotal": 0,
-                "item_discounts": [],
-                "frontstore_discount": None,
-                "discount_total": 0,
-                "final_total": 0,
-                "savings_percentage": 0,
-                "message": "cart_empty"
-            }, status_code=200)
+            return JSONResponse(
+                {
+                    "subtotal": 0,
+                    "item_discounts": [],
+                    "frontstore_discount": None,
+                    "discount_total": 0,
+                    "final_total": 0,
+                    "savings_percentage": 0,
+                    "message": "cart_empty",
+                },
+                status_code=200,
+            )
 
         # Get selected coupons
         coupons_result = db.execute(
@@ -1284,7 +1356,7 @@ async def get_cart_summary(
                 JOIN coupons c ON cc.coupon_id = c.id
                 WHERE cc.user_id = :user_id
             """),
-            {"user_id": user_id}
+            {"user_id": user_id},
         )
         coupons = coupons_result.fetchall()
 
@@ -1298,17 +1370,17 @@ async def get_cart_summary(
                 "id": str(c[0]),
                 "type": c[1],
                 "discount_details": c[2],
-                "category_or_brand": (c[3] or '').lower(),
+                "category_or_brand": (c[3] or "").lower(),
                 "discount_type": c[4],
-                "discount_value": Decimal(str(c[5])) if c[5] else Decimal('0'),
-                "min_purchase_amount": Decimal(str(c[6])) if c[6] else Decimal('0'),
-                "max_discount": Decimal(str(c[7])) if c[7] else None
+                "discount_value": Decimal(str(c[5])) if c[5] else Decimal("0"),
+                "min_purchase_amount": Decimal(str(c[6])) if c[6] else Decimal("0"),
+                "max_discount": Decimal(str(c[7])) if c[7] else None,
             }
-            if c[1] == 'frontstore':
+            if c[1] == "frontstore":
                 frontstore_coupons.append(coupon_data)
-            elif c[1] == 'category':
+            elif c[1] == "category":
                 category_coupons.append(coupon_data)
-            elif c[1] == 'brand':
+            elif c[1] == "brand":
                 brand_coupons.append(coupon_data)
 
         # Pre-index coupons by category/brand for O(1) lookup instead of O(n) loop
@@ -1325,7 +1397,7 @@ async def get_cart_summary(
                 brand_coupon_map[key].append(coupon)
 
         # Calculate subtotal and item-level discounts
-        subtotal = Decimal('0')
+        subtotal = Decimal("0")
         item_discounts = []
         categories_with_discount = set()  # Track one coupon per category
 
@@ -1334,15 +1406,15 @@ async def get_cart_summary(
             quantity = item[1]
             product_id = str(item[2])
             product_name = item[3]
-            unit_price = Decimal(str(item[4])) if item[4] else Decimal('0')
-            category = (item[5] or '').lower()
-            brand = (item[6] or '').lower()
+            unit_price = Decimal(str(item[4])) if item[4] else Decimal("0")
+            category = (item[5] or "").lower()
+            brand = (item[6] or "").lower()
             line_total = unit_price * quantity
             subtotal += line_total
 
             # Find best applicable coupon for this item
             # Priority: category > brand (or best discount)
-            best_discount = Decimal('0')
+            best_discount = Decimal("0")
             best_coupon = None
 
             # Check category coupons using O(1) lookup (only if category not already used)
@@ -1365,20 +1437,24 @@ async def get_cart_summary(
                 if best_coupon["type"] == "category":
                     categories_with_discount.add(category)
 
-                item_discounts.append({
-                    "cart_item_id": cart_item_id,
-                    "product_name": product_name,
-                    "coupon_id": best_coupon["id"],
-                    "coupon_details": best_coupon["discount_details"],
-                    "discount_amount": float(best_discount)
-                })
+                item_discounts.append(
+                    {
+                        "cart_item_id": cart_item_id,
+                        "product_name": product_name,
+                        "coupon_id": best_coupon["id"],
+                        "coupon_details": best_coupon["discount_details"],
+                        "discount_amount": float(best_discount),
+                    }
+                )
 
         # Calculate frontstore discount (apply to subtotal after item discounts)
-        item_discount_total = sum(Decimal(str(d["discount_amount"])) for d in item_discounts)
+        item_discount_total = sum(
+            Decimal(str(d["discount_amount"])) for d in item_discounts
+        )
         subtotal_after_items = subtotal - item_discount_total
 
         frontstore_discount = None
-        frontstore_discount_amount = Decimal('0')
+        frontstore_discount_amount = Decimal("0")
 
         if frontstore_coupons:
             # Sort by discount value (desc) and pick the best one that meets min purchase
@@ -1392,7 +1468,7 @@ async def get_cart_summary(
                         frontstore_discount = {
                             "coupon_id": coupon["id"],
                             "coupon_details": coupon["discount_details"],
-                            "discount_amount": float(discount)
+                            "discount_amount": float(discount),
                         }
                         break
 
@@ -1402,26 +1478,33 @@ async def get_cart_summary(
 
         # Ensure final_total is not negative
         if final_total < 0:
-            final_total = Decimal('0')
+            final_total = Decimal("0")
 
-        savings_percentage = (discount_total / subtotal * 100) if subtotal > 0 else Decimal('0')
+        savings_percentage = (
+            (discount_total / subtotal * 100) if subtotal > 0 else Decimal("0")
+        )
 
-        logger.info(f"User {user_id} cart summary: subtotal=${subtotal}, discounts=${discount_total}, final=${final_total}")
+        logger.info(
+            f"User {user_id} cart summary: subtotal=${subtotal}, discounts=${discount_total}, final=${final_total}"
+        )
 
-        return JSONResponse({
-            "subtotal": float(subtotal),
-            "item_discounts": item_discounts,
-            "frontstore_discount": frontstore_discount,
-            "discount_total": float(discount_total),
-            "final_total": float(final_total),
-            "savings_percentage": round(float(savings_percentage), 1)
-        }, status_code=200)
+        return JSONResponse(
+            {
+                "subtotal": float(subtotal),
+                "item_discounts": item_discounts,
+                "frontstore_discount": frontstore_discount,
+                "discount_total": float(discount_total),
+                "final_total": float(final_total),
+                "savings_percentage": round(float(savings_percentage), 1),
+            },
+            status_code=200,
+        )
 
     except Exception as e:
         logger.exception(f"Failed to get cart summary for user {user_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get cart summary: {str(e)}"
+            detail=f"Failed to get cart summary: {str(e)}",
         )
 
 
@@ -1429,7 +1512,7 @@ async def get_cart_summary(
 async def track_coupon_interaction(
     request: CouponInteractionRequest,
     user: Dict[str, Any] = Depends(token_dep),
-    db: Session = Depends(db_dep)
+    db: Session = Depends(db_dep),
 ) -> JSONResponse:
     """
     B-21: Track coupon interaction.
@@ -1438,11 +1521,11 @@ async def track_coupon_interaction(
     """
     user_id = user["user_id"]
 
-    valid_actions = {'added_to_cart', 'removed_from_cart', 'applied', 'redeemed'}
+    valid_actions = {"added_to_cart", "removed_from_cart", "applied", "redeemed"}
     if request.action not in valid_actions:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid action. Must be one of: {', '.join(valid_actions)}"
+            detail=f"Invalid action. Must be one of: {', '.join(valid_actions)}",
         )
 
     try:
@@ -1455,12 +1538,14 @@ async def track_coupon_interaction(
                 "user_id": user_id,
                 "coupon_id": request.coupon_id,
                 "action": request.action,
-                "order_id": request.order_id
-            }
+                "order_id": request.order_id,
+            },
         )
         db.commit()
 
-        logger.info(f"User {user_id} interaction: {request.action} on coupon {request.coupon_id}")
+        logger.info(
+            f"User {user_id} interaction: {request.action} on coupon {request.coupon_id}"
+        )
         return JSONResponse({"success": True}, status_code=200)
 
     except Exception as e:
@@ -1468,7 +1553,7 @@ async def track_coupon_interaction(
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to track interaction: {str(e)}"
+            detail=f"Failed to track interaction: {str(e)}",
         )
 
 
@@ -1478,11 +1563,11 @@ def calculate_discount(coupon: Dict, amount: Decimal) -> Decimal:
     B-22: Coupon calculation logic.
     """
     discount_type = coupon.get("discount_type")
-    discount_value = coupon.get("discount_value", Decimal('0'))
+    discount_value = coupon.get("discount_value", Decimal("0"))
     max_discount = coupon.get("max_discount")
 
     if discount_type == "percent":
-        discount = amount * (discount_value / Decimal('100'))
+        discount = amount * (discount_value / Decimal("100"))
         if max_discount:
             discount = min(discount, max_discount)
         return discount
@@ -1494,11 +1579,11 @@ def calculate_discount(coupon: Dict, amount: Decimal) -> Decimal:
         # BOGO: discount_value is the percentage off the second item
         # For simplicity, apply as percent discount on half the amount
         half_amount = amount / 2
-        discount = half_amount * (discount_value / Decimal('100'))
+        discount = half_amount * (discount_value / Decimal("100"))
         return discount
 
     elif discount_type == "free_shipping":
         # Free shipping doesn't reduce item total
-        return Decimal('0')
+        return Decimal("0")
 
-    return Decimal('0')
+    return Decimal("0")

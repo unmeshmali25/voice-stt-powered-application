@@ -24,7 +24,17 @@ from functools import wraps
 
 import numpy as np
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request, HTTPException, status, UploadFile, File, Depends, Header, Query
+from fastapi import (
+    FastAPI,
+    Request,
+    HTTPException,
+    status,
+    UploadFile,
+    File,
+    Depends,
+    Header,
+    Query,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from starlette.staticfiles import StaticFiles
@@ -75,7 +85,9 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")
 
 DATA_DIR = Path(os.getenv("DATA_DIR", "./data")).resolve()
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:dev@localhost:5432/voiceoffers")
+DATABASE_URL = os.getenv(
+    "DATABASE_URL", "postgresql://postgres:dev@localhost:5432/voiceoffers"
+)
 if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
@@ -107,7 +119,9 @@ try:
         # Prefer IPv4 if available to avoid IPv6-only connectivity issues on some hosts
         try:
             if host not in {"localhost", "127.0.0.1"}:
-                addr_info_list = socket.getaddrinfo(host, port or 5432, socket.AF_INET, socket.SOCK_STREAM)
+                addr_info_list = socket.getaddrinfo(
+                    host, port or 5432, socket.AF_INET, socket.SOCK_STREAM
+                )
                 if addr_info_list:
                     ipv4_addr = addr_info_list[0][4][0]
                     # Provide hostaddr while keeping host for TLS/SNI
@@ -130,7 +144,9 @@ except Exception:
     # If anything goes wrong, fall back to the original DATABASE_URL
     pass
 
-FAISS_INDEX_PATH = Path(os.getenv("FAISS_INDEX_PATH", "./data/index/faiss.index")).resolve()
+FAISS_INDEX_PATH = Path(
+    os.getenv("FAISS_INDEX_PATH", "./data/index/faiss.index")
+).resolve()
 FAISS_META_PATH = Path(os.getenv("FAISS_META_PATH", "./data/index/meta.json")).resolve()
 
 # Database engine with connection pooling
@@ -144,7 +160,7 @@ engine = create_engine(
     max_overflow=SIMULATION_MAX_OVERFLOW,
     pool_pre_ping=True,
     pool_recycle=1800,  # Recycle connections every 30 min (was 1 hour)
-    pool_timeout=30,    # Wait up to 30s for a connection
+    pool_timeout=30,  # Wait up to 30s for a connection
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -164,6 +180,7 @@ if SUPABASE_URL and SUPABASE_KEY:
 # Async OpenAI client for non-blocking API calls
 _async_openai_client: Optional[AsyncOpenAI] = None
 
+
 def get_async_openai_client() -> AsyncOpenAI:
     """Get or create async OpenAI client for non-blocking API calls."""
     global _async_openai_client
@@ -175,10 +192,11 @@ def get_async_openai_client() -> AsyncOpenAI:
             api_key=api_key,
             default_headers={
                 "X-Environment": ENV,
-                "X-User-Agent": f"MultiModalAIRetail/1.0/{ENV}"
-            }
+                "X-User-Agent": f"MultiModalAIRetail/1.0/{ENV}",
+            },
         )
     return _async_openai_client
+
 
 # --- App ---
 logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper(), logging.INFO))
@@ -206,37 +224,44 @@ ALWAYS_ALLOWED_ORIGINS = [
     "https://voiceoffers.vercel.app",
 ]
 
+
 def get_cors_origins():
     """Get CORS origins based on environment."""
     base_origins = list(ALWAYS_ALLOWED_ORIGINS)  # Always include production URLs
-    
+
     if FRONTEND_URL and FRONTEND_URL not in base_origins:
         base_origins.append(FRONTEND_URL)
-    
+
     if IS_DEV:
         # Development: Allow localhost ports + production URLs
-        base_origins.extend([
-            "http://localhost:5174",
-            "http://localhost:3000",
-            "http://127.0.0.1:5174",
-            "http://127.0.0.1:3000"
-        ])
+        base_origins.extend(
+            [
+                "http://localhost:5174",
+                "http://localhost:3000",
+                "http://127.0.0.1:5174",
+                "http://127.0.0.1:3000",
+            ]
+        )
     elif IS_STAGING:
         # Staging: Allow Vercel preview URLs
-        base_origins.extend([
-            "https://voice-stt-powered-application-staging.vercel.app",
-            "https://voiceoffers-staging.vercel.app",
-        ])
+        base_origins.extend(
+            [
+                "https://voice-stt-powered-application-staging.vercel.app",
+                "https://voiceoffers-staging.vercel.app",
+            ]
+        )
     elif IS_PROD:
         # Production: Add custom domain if applicable
         base_origins.append("https://voiceoffers.com")
     else:
         # Fallback: still include localhost for local testing
-        base_origins.extend([
-            "http://localhost:5174",
-            "http://localhost:3000",
-        ])
-    
+        base_origins.extend(
+            [
+                "http://localhost:5174",
+                "http://localhost:3000",
+            ]
+        )
+
     # Remove duplicates while preserving order
     seen = set()
     unique_origins = []
@@ -244,8 +269,9 @@ def get_cors_origins():
         if origin and origin not in seen:
             seen.add(origin)
             unique_origins.append(origin)
-    
+
     return unique_origins
+
 
 cors_origins = get_cors_origins()
 logger.info(f"Environment: {ENV}")
@@ -253,7 +279,7 @@ logger.info(f"CORS origins: {cors_origins}")
 
 # Always enable regex pattern for Vercel deployments (handles preview URLs with hashes)
 # This ensures CORS works even if ENV is misconfigured
-cors_regex = r'https://(voice-stt-powered-application(-staging)?(-[a-z0-9]+)?|voiceoffers(-staging)?(-[a-z0-9]+)?)\.vercel\.app'
+cors_regex = r"https://(voice-stt-powered-application(-staging)?(-[a-z0-9]+)?|voiceoffers(-staging)?(-[a-z0-9]+)?)\.vercel\.app"
 logger.info(f"CORS regex pattern: {cors_regex}")
 
 app.add_middleware(
@@ -264,7 +290,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
-    expose_headers=["*"]
+    expose_headers=["*"],
 )
 
 
@@ -278,10 +304,13 @@ def ensure_dirs() -> None:
 ensure_dirs()
 
 # Serve frontend static files
-app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR), html=False), name="static")
+app.mount(
+    "/static", StaticFiles(directory=str(FRONTEND_DIR), html=False), name="static"
+)
 
 
 # --- Authentication Utilities ---
+
 
 def get_db():
     """Dependency for database sessions."""
@@ -292,7 +321,9 @@ def get_db():
         db.close()
 
 
-def verify_token(authorization: str = Header(None), db: Session = Depends(get_db)) -> Dict[str, Any]:
+def verify_token(
+    authorization: str = Header(None), db: Session = Depends(get_db)
+) -> Dict[str, Any]:
     """
     Verify Supabase JWT token and return user data.
     Expects Authorization header: "Bearer <token>"
@@ -302,7 +333,7 @@ def verify_token(authorization: str = Header(None), db: Session = Depends(get_db
     if not authorization:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing authorization header"
+            detail="Missing authorization header",
         )
 
     # SIMULATION MODE BYPASS (B-8)
@@ -311,27 +342,31 @@ def verify_token(authorization: str = Header(None), db: Session = Depends(get_db
             agent_id = authorization.replace("Bearer dev:", "")
             # Look up agent by agent_id
             result = db.execute(
-                text("SELECT user_id FROM agents WHERE agent_id = :aid AND is_active = true"),
-                {"aid": agent_id}
+                text(
+                    "SELECT user_id FROM agents WHERE agent_id = :aid AND is_active = true"
+                ),
+                {"aid": agent_id},
             ).fetchone()
             if result:
-                logger.info(f"Simulation auth: agent {agent_id} -> user {result.user_id}")
+                logger.info(
+                    f"Simulation auth: agent {agent_id} -> user {result.user_id}"
+                )
                 return {
                     "user_id": str(result.user_id),
                     "email": f"{agent_id}@simulation.local",
                     "is_simulation": True,
-                    "payload": {"sub": str(result.user_id), "agent_id": agent_id}
+                    "payload": {"sub": str(result.user_id), "agent_id": agent_id},
                 }
             else:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail=f"Unknown agent: {agent_id}"
+                    detail=f"Unknown agent: {agent_id}",
                 )
 
     if not authorization.startswith("Bearer "):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authorization format. Use: Bearer <token>"
+            detail="Invalid authorization format. Use: Bearer <token>",
         )
 
     token = authorization.replace("Bearer ", "")
@@ -339,16 +374,13 @@ def verify_token(authorization: str = Header(None), db: Session = Depends(get_db
     if not SUPABASE_JWT_SECRET:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Supabase JWT secret not configured"
+            detail="Supabase JWT secret not configured",
         )
 
     try:
         # Decode and verify JWT
         payload = jwt.decode(
-            token,
-            SUPABASE_JWT_SECRET,
-            algorithms=["HS256"],
-            audience="authenticated"
+            token, SUPABASE_JWT_SECRET, algorithms=["HS256"], audience="authenticated"
         )
 
         user_id = payload.get("sub")
@@ -357,20 +389,16 @@ def verify_token(authorization: str = Header(None), db: Session = Depends(get_db
         if not user_id:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token: missing user ID"
+                detail="Invalid token: missing user ID",
             )
 
-        return {
-            "user_id": user_id,
-            "email": email,
-            "payload": payload
-        }
+        return {"user_id": user_id, "email": email, "payload": payload}
 
     except PyJWTError as e:
         logger.error(f"JWT verification failed: {e}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid or expired token: {str(e)}"
+            detail=f"Invalid or expired token: {str(e)}",
         )
 
 
@@ -380,7 +408,7 @@ def assign_random_coupons_to_user(db: Session, user_id: str) -> int:
     - 2 frontstore coupons
     - 30 category/brand coupons
     - All expire in 14 days
-    
+
     Returns: Number of coupons assigned
     """
     try:
@@ -396,19 +424,21 @@ def assign_random_coupons_to_user(db: Session, user_id: str) -> int:
                   AND uc.eligible_until > NOW()
                 GROUP BY c.type
             """),
-            {"user_id": user_id}
+            {"user_id": user_id},
         )
-        
+
         current_counts = {row[0]: row[1] for row in result.fetchall()}
-        frontstore_count = current_counts.get('frontstore', 0)
-        category_brand_count = current_counts.get('category', 0) + current_counts.get('brand', 0)
-        
+        frontstore_count = current_counts.get("frontstore", 0)
+        category_brand_count = current_counts.get("category", 0) + current_counts.get(
+            "brand", 0
+        )
+
         # Calculate how many coupons to assign
         frontstore_needed = max(0, 2 - frontstore_count)
         category_brand_needed = max(0, 30 - category_brand_count)
-        
+
         total_assigned = 0
-        
+
         # Assign frontstore coupons (bulk insert)
         if frontstore_needed > 0:
             result = db.execute(
@@ -422,7 +452,7 @@ def assign_random_coupons_to_user(db: Session, user_id: str) -> int:
                     ORDER BY RANDOM()
                     LIMIT :limit
                 """),
-                {"user_id": user_id, "limit": frontstore_needed}
+                {"user_id": user_id, "limit": frontstore_needed},
             )
 
             coupon_ids = [row[0] for row in result.fetchall()]
@@ -430,15 +460,17 @@ def assign_random_coupons_to_user(db: Session, user_id: str) -> int:
                 values_list = []
                 params = {"user_id": user_id}
                 for i, cid in enumerate(coupon_ids):
-                    values_list.append(f"(:user_id, :cid_{i}, NOW() + INTERVAL '14 days')")
+                    values_list.append(
+                        f"(:user_id, :cid_{i}, NOW() + INTERVAL '14 days')"
+                    )
                     params[f"cid_{i}"] = cid
                 db.execute(
                     text(f"""
                         INSERT INTO user_coupons (user_id, coupon_id, eligible_until)
-                        VALUES {', '.join(values_list)}
+                        VALUES {", ".join(values_list)}
                         ON CONFLICT (user_id, coupon_id) DO NOTHING
                     """),
-                    params
+                    params,
                 )
                 total_assigned += len(coupon_ids)
 
@@ -455,7 +487,7 @@ def assign_random_coupons_to_user(db: Session, user_id: str) -> int:
                     ORDER BY RANDOM()
                     LIMIT :limit
                 """),
-                {"user_id": user_id, "limit": category_brand_needed}
+                {"user_id": user_id, "limit": category_brand_needed},
             )
 
             coupon_ids = [row[0] for row in result.fetchall()]
@@ -463,25 +495,29 @@ def assign_random_coupons_to_user(db: Session, user_id: str) -> int:
                 values_list = []
                 params = {"user_id": user_id}
                 for i, cid in enumerate(coupon_ids):
-                    values_list.append(f"(:user_id, :cid_{i}, NOW() + INTERVAL '14 days')")
+                    values_list.append(
+                        f"(:user_id, :cid_{i}, NOW() + INTERVAL '14 days')"
+                    )
                     params[f"cid_{i}"] = cid
                 db.execute(
                     text(f"""
                         INSERT INTO user_coupons (user_id, coupon_id, eligible_until)
-                        VALUES {', '.join(values_list)}
+                        VALUES {", ".join(values_list)}
                         ON CONFLICT (user_id, coupon_id) DO NOTHING
                     """),
-                    params
+                    params,
                 )
                 total_assigned += len(coupon_ids)
-        
+
         db.commit()
-        
+
         if total_assigned > 0:
-            logger.info(f"Assigned {total_assigned} coupons to user {user_id} ({frontstore_needed} frontstore, {category_brand_needed} category/brand)")
-        
+            logger.info(
+                f"Assigned {total_assigned} coupons to user {user_id} ({frontstore_needed} frontstore, {category_brand_needed} category/brand)"
+            )
+
         return total_assigned
-        
+
     except Exception as e:
         logger.error(f"Failed to assign coupons to user {user_id}: {e}")
         db.rollback()
@@ -502,6 +538,7 @@ app.include_router(offer_engine_routes)  # Offer engine (simulation only)
 
 
 # --- Routes ---
+
 
 @app.get("/")
 async def root():
@@ -549,7 +586,9 @@ async def healthz(db: Session = Depends(get_db)) -> JSONResponse:
     checks: Dict[str, Any] = {
         "frontend_index_exists": FRONTEND_INDEX.exists(),
         "data_dir_exists": DATA_DIR.exists(),
-        "supabase_configured": bool(SUPABASE_URL and SUPABASE_KEY and SUPABASE_JWT_SECRET),
+        "supabase_configured": bool(
+            SUPABASE_URL and SUPABASE_KEY and SUPABASE_JWT_SECRET
+        ),
     }
 
     # Test database connection
@@ -566,11 +605,17 @@ async def healthz(db: Session = Depends(get_db)) -> JSONResponse:
         checks["coupons_table_exists"] = False
         checks["error"] = str(e)
 
-    status_overall = "ok" if all([
-        checks["frontend_index_exists"],
-        checks["supabase_configured"],
-        checks.get("database_connected", False)
-    ]) else "degraded"
+    status_overall = (
+        "ok"
+        if all(
+            [
+                checks["frontend_index_exists"],
+                checks["supabase_configured"],
+                checks.get("database_connected", False),
+            ]
+        )
+        else "degraded"
+    )
 
     payload = {
         "status": status_overall,
@@ -582,23 +627,22 @@ async def healthz(db: Session = Depends(get_db)) -> JSONResponse:
 
 # --- Authentication Endpoints ---
 
+
 @app.post("/api/auth/verify")
 async def auth_verify(user: Dict[str, Any] = Depends(verify_token)) -> JSONResponse:
     """
     Verify the current Supabase session token.
     Returns user information if valid.
     """
-    return JSONResponse({
-        "valid": True,
-        "user_id": user["user_id"],
-        "email": user["email"]
-    }, status_code=200)
+    return JSONResponse(
+        {"valid": True, "user_id": user["user_id"], "email": user["email"]},
+        status_code=200,
+    )
 
 
 @app.get("/api/auth/me")
 async def auth_me(
-    user: Dict[str, Any] = Depends(verify_token),
-    db: Session = Depends(get_db)
+    user: Dict[str, Any] = Depends(verify_token), db: Session = Depends(get_db)
 ) -> JSONResponse:
     """
     Get current user profile from database.
@@ -611,7 +655,7 @@ async def auth_me(
     # Check if user exists in local database
     result = db.execute(
         text("SELECT id, email, full_name, created_at FROM users WHERE id = :user_id"),
-        {"user_id": user_id}
+        {"user_id": user_id},
     )
     user_row = result.fetchone()
 
@@ -627,15 +671,19 @@ async def auth_me(
                 {
                     "id": user_id,
                     "email": email,
-                    "full_name": user.get("payload", {}).get("user_metadata", {}).get("full_name")
-                }
+                    "full_name": user.get("payload", {})
+                    .get("user_metadata", {})
+                    .get("full_name"),
+                },
             )
             db.commit()
 
             # Fetch the newly created user
             result = db.execute(
-                text("SELECT id, email, full_name, created_at FROM users WHERE id = :user_id"),
-                {"user_id": user_id}
+                text(
+                    "SELECT id, email, full_name, created_at FROM users WHERE id = :user_id"
+                ),
+                {"user_id": user_id},
             )
             user_row = result.fetchone()
         except Exception as e:
@@ -643,7 +691,7 @@ async def auth_me(
             db.rollback()
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to sync user profile"
+                detail="Failed to sync user profile",
             )
 
     # Check if user needs coupon assignment (for new or existing users)
@@ -654,31 +702,37 @@ async def auth_me(
             WHERE user_id = :user_id
               AND eligible_until > NOW()
         """),
-        {"user_id": user_id}
+        {"user_id": user_id},
     )
     active_coupon_count = result.scalar() or 0
-    
+
     # Assign coupons if user has less than 32 active coupons
     if active_coupon_count < 32:
-        logger.info(f"User {user_id} has {active_coupon_count} active coupons, assigning more")
+        logger.info(
+            f"User {user_id} has {active_coupon_count} active coupons, assigning more"
+        )
         assign_random_coupons_to_user(db, user_id)
 
-    return JSONResponse({
-        "id": str(user_row[0]),
-        "email": user_row[1],
-        "full_name": user_row[2],
-        "created_at": user_row[3].isoformat() if user_row[3] else None
-    }, status_code=200)
+    return JSONResponse(
+        {
+            "id": str(user_row[0]),
+            "email": user_row[1],
+            "full_name": user_row[2],
+            "created_at": user_row[3].isoformat() if user_row[3] else None,
+        },
+        status_code=200,
+    )
 
 
 # --- Speech-to-Text Endpoint ---
+
 
 @app.post("/api/stt")
 @limiter.limit("10/minute")  # Rate limit: 10 requests per minute per IP
 async def stt(
     request: Request,
     file: UploadFile = File(...),
-    user: Dict[str, Any] = Depends(verify_token)
+    user: Dict[str, Any] = Depends(verify_token),
 ) -> JSONResponse:
     """
     Speech-to-text endpoint using OpenAI Whisper API (authenticated).
@@ -693,21 +747,25 @@ async def stt(
     if not api_key:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="OPENAI_API_KEY not configured"
+            detail="OPENAI_API_KEY not configured",
         )
 
     # Validate file
     if not file:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No audio file provided"
+            status_code=status.HTTP_400_BAD_REQUEST, detail="No audio file provided"
         )
 
     # Validate MIME type
-    allowed_mimes = os.getenv("ALLOWED_AUDIO_MIME", "audio/webm,audio/wav,audio/mp3,audio/mpeg,audio/m4a,audio/x-m4a").split(",")
+    allowed_mimes = os.getenv(
+        "ALLOWED_AUDIO_MIME",
+        "audio/webm,audio/wav,audio/mp3,audio/mpeg,audio/m4a,audio/x-m4a",
+    ).split(",")
     content_type = file.content_type or ""
 
-    logger.info(f"User {user_id} uploaded audio file: {file.filename}, content_type: {content_type}")
+    logger.info(
+        f"User {user_id} uploaded audio file: {file.filename}, content_type: {content_type}"
+    )
 
     # Read file content
     try:
@@ -715,8 +773,7 @@ async def stt(
     except Exception as e:
         logger.exception("Failed to read uploaded file: %s", e)
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Failed to read audio file"
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to read audio file"
         )
 
     # Validate file size (OpenAI limit is 25MB)
@@ -724,13 +781,12 @@ async def stt(
     if len(audio_bytes) > max_size_mb * 1024 * 1024:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"Audio file too large. Max {max_size_mb}MB allowed."
+            detail=f"Audio file too large. Max {max_size_mb}MB allowed.",
         )
 
     if len(audio_bytes) == 0:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Audio file is empty"
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Audio file is empty"
         )
 
     # Determine file extension
@@ -761,6 +817,7 @@ async def stt(
         client = get_async_openai_client()
 
         import io
+
         audio_file = io.BytesIO(audio_bytes)
         audio_file.name = f"audio.{ext}"
 
@@ -769,27 +826,33 @@ async def stt(
         t_api_start = time.time()
         logger.info(f"Calling OpenAI Whisper API (async) for user {user_id}")
         response = await client.audio.transcriptions.create(
-            model="whisper-1",
-            file=audio_file,
-            response_format="json"
+            model="whisper-1", file=audio_file, response_format="json"
         )
         t_api_end = time.time()
-        
-        logger.info(f"OpenAI API response received. Type: {type(response)}, Has 'text' attr: {hasattr(response, 'text')}")
+
+        logger.info(
+            f"OpenAI API response received. Type: {type(response)}, Has 'text' attr: {hasattr(response, 'text')}"
+        )
 
         # Extract transcript from response
         # When response_format="json", OpenAI returns a Transcription object with .text attribute
-        if hasattr(response, 'text'):
+        if hasattr(response, "text"):
             transcript = response.text.strip() if response.text else ""
         elif isinstance(response, str):
             transcript = response.strip()
         elif isinstance(response, dict):
-            transcript = response.get('text', '').strip() if isinstance(response.get('text'), str) else ""
+            transcript = (
+                response.get("text", "").strip()
+                if isinstance(response.get("text"), str)
+                else ""
+            )
         else:
             # Fallback: convert to string
-            logger.warning(f"Unexpected response type: {type(response)}, value: {response}")
+            logger.warning(
+                f"Unexpected response type: {type(response)}, value: {response}"
+            )
             transcript = str(response).strip() if response else ""
-        
+
         logger.info(f"Extracted transcript length: {len(transcript)} characters")
 
         t_total = time.time() - t0
@@ -797,16 +860,21 @@ async def stt(
         total_duration_ms = int(t_total * 1000)
 
         if ENABLE_TIMING_LOGS:
-            logger.info(f"STT completed for user {user_id}: {total_duration_ms}ms total (API: {api_duration_ms}ms)")
+            logger.info(
+                f"STT completed for user {user_id}: {total_duration_ms}ms total (API: {api_duration_ms}ms)"
+            )
 
         logger.info(f"Transcript from user {user_id}: {transcript}")
 
-        return JSONResponse({
-            "transcript": transcript,
-            "duration_ms": total_duration_ms,
-            "api_duration_ms": api_duration_ms,
-            "user_id": user_id
-        }, status_code=200)
+        return JSONResponse(
+            {
+                "transcript": transcript,
+                "duration_ms": total_duration_ms,
+                "api_duration_ms": api_duration_ms,
+                "user_id": user_id,
+            },
+            status_code=200,
+        )
 
     except Exception as e:
         logger.exception("OpenAI Whisper API error: %s", e)
@@ -815,35 +883,41 @@ async def stt(
 
         error_msg = str(e)
         error_type = type(e).__name__
-        
+
         # Check for specific OpenAI API errors
         if "insufficient_quota" in error_msg.lower() or "quota" in error_msg.lower():
             detail = f"OpenAI quota exceeded. Error: {error_msg}"
         elif "rate_limit" in error_msg.lower():
             detail = f"Rate limit exceeded. Please try again later. Error: {error_msg}"
-        elif "invalid_api_key" in error_msg.lower() or "authentication" in error_msg.lower() or "401" in error_msg:
+        elif (
+            "invalid_api_key" in error_msg.lower()
+            or "authentication" in error_msg.lower()
+            or "401" in error_msg
+        ):
             detail = f"Invalid OpenAI API key. Please check your OPENAI_API_KEY environment variable. Error: {error_msg}"
         elif "timeout" in error_msg.lower():
-            detail = f"Request timeout. Please try with shorter audio. Error: {error_msg}"
+            detail = (
+                f"Request timeout. Please try with shorter audio. Error: {error_msg}"
+            )
         elif "connection" in error_msg.lower() or "network" in error_msg.lower():
             detail = f"Network error connecting to OpenAI API. Error: {error_msg}"
         else:
             detail = f"Speech-to-text failed ({error_type}): {error_msg}"
 
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=detail
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=detail
         )
 
 
 # --- Coupon Search Endpoint ---
+
 
 @app.post("/api/coupons/search")
 @limiter.limit("30/minute")  # Rate limit: 30 searches per minute per IP
 async def coupon_search(
     request: Request,
     user: Dict[str, Any] = Depends(verify_token),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ) -> JSONResponse:
     """
     Semantic search for coupons assigned to the authenticated user.
@@ -863,7 +937,7 @@ async def coupon_search(
     if not isinstance(question, str) or not question.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Missing 'question' in request body"
+            detail="Missing 'question' in request body",
         )
 
     user_id = user["user_id"]
@@ -888,11 +962,36 @@ async def coupon_search(
         rerank_top_n = 3
 
     # Step 1: Clean query
-    stop_words = {'what', 'how', 'when', 'where', 'why', 'who', 'is', 'are', 'the', 'a', 'an', 'to', 'do', 'does'}
-    cleaned_question = question.replace('?', ' ').replace('.', ' ').replace(',', ' ')
-    words = [w.strip() for w in cleaned_question.lower().split() if w.strip() and w.lower() not in stop_words]
-    search_query = ' '.join(words) if words else question.replace('"', '').replace('.', ' ').replace('?', ' ')
-    logger.info(f"User {user_id} searching with query: '{search_query}' (from: '{question}')")
+    stop_words = {
+        "what",
+        "how",
+        "when",
+        "where",
+        "why",
+        "who",
+        "is",
+        "are",
+        "the",
+        "a",
+        "an",
+        "to",
+        "do",
+        "does",
+    }
+    cleaned_question = question.replace("?", " ").replace(".", " ").replace(",", " ")
+    words = [
+        w.strip()
+        for w in cleaned_question.lower().split()
+        if w.strip() and w.lower() not in stop_words
+    ]
+    search_query = (
+        " ".join(words)
+        if words
+        else question.replace('"', "").replace(".", " ").replace("?", " ")
+    )
+    logger.info(
+        f"User {user_id} searching with query: '{search_query}' (from: '{question}')"
+    )
 
     # Step 2: Full-text search on user's assigned coupons
     try:
@@ -905,15 +1004,12 @@ async def coupon_search(
                 WHERE uc.user_id = :user_id
                   AND uc.eligible_until > NOW()
                   AND c.expiration_date > NOW()
+                  AND (c.is_active IS NULL OR c.is_active = true)
                   AND (c.type = 'frontstore' OR c.text_vector @@ websearch_to_tsquery('english', :query))
                 ORDER BY ts_rank_cd(c.text_vector, websearch_to_tsquery('english', :query), 32) DESC
                 LIMIT :limit
             """),
-            {
-                "user_id": user_id,
-                "query": search_query,
-                "limit": fts_top_k
-            }
+            {"user_id": user_id, "query": search_query, "limit": fts_top_k},
         )
         rows = result.fetchall()
         logger.info(f"FTS returned {len(rows)} candidates for user {user_id}")
@@ -930,6 +1026,7 @@ async def coupon_search(
                     WHERE uc.user_id = :user_id
                       AND uc.eligible_until > NOW()
                       AND c.expiration_date > NOW()
+                      AND (c.is_active IS NULL OR c.is_active = true)
                       AND (c.type = 'frontstore'
                            OR c.discount_details ILIKE :pattern
                            OR c.category_or_brand ILIKE :pattern
@@ -939,8 +1036,8 @@ async def coupon_search(
                 {
                     "user_id": user_id,
                     "pattern": f"%{search_query}%",
-                    "limit": fts_top_k
-                }
+                    "limit": fts_top_k,
+                },
             )
             rows = result.fetchall()
             logger.info(f"ILIKE search returned {len(rows)} candidates")
@@ -952,28 +1049,39 @@ async def coupon_search(
                     session_id=session_id,
                     user_id=user_id,
                     event_type="coupon_search",
-                    payload={"question": question, "query": search_query, "results": 0, "message": "no_results"},
+                    payload={
+                        "question": question,
+                        "query": search_query,
+                        "results": 0,
+                        "message": "no_results",
+                    },
                 )
                 db.commit()
-            return JSONResponse({"results": [], "message": "no_results"}, status_code=200)
+            return JSONResponse(
+                {"results": [], "message": "no_results"}, status_code=200
+            )
 
         # Build candidate list
         candidates = []
         for row in rows:
-            candidates.append({
-                "id": str(row[0]),
-                "type": row[1],
-                "discount_details": row[2],
-                "category_or_brand": row[3],
-                "expiration_date": row[4].isoformat() if row[4] else None,
-                "terms": row[5]
-            })
+            candidates.append(
+                {
+                    "id": str(row[0]),
+                    "type": row[1],
+                    "discount_details": row[2],
+                    "category_or_brand": row[3],
+                    "expiration_date": row[4].isoformat() if row[4] else None,
+                    "terms": row[5],
+                }
+            )
 
         # Step 3: Embedding re-ranking
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
             # Return FTS results without scores
-            logger.warning("No OpenAI API key, returning FTS results without re-ranking")
+            logger.warning(
+                "No OpenAI API key, returning FTS results without re-ranking"
+            )
             if session_id:
                 record_shopping_event(
                     db,
@@ -988,10 +1096,10 @@ async def coupon_search(
                     },
                 )
                 db.commit()
-            return JSONResponse({
-                "results": candidates[:rerank_top_n],
-                "message": "no_reranking"
-            }, status_code=200)
+            return JSONResponse(
+                {"results": candidates[:rerank_top_n], "message": "no_reranking"},
+                status_code=200,
+            )
 
         emb_model = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
 
@@ -1022,10 +1130,10 @@ async def coupon_search(
                     },
                 )
                 db.commit()
-            return JSONResponse({
-                "results": candidates[:rerank_top_n],
-                "message": "embedding_failed"
-            }, status_code=200)
+            return JSONResponse(
+                {"results": candidates[:rerank_top_n], "message": "embedding_failed"},
+                status_code=200,
+            )
 
         # Normalize and compute scores
         def _norm(v: np.ndarray) -> np.ndarray:
@@ -1044,7 +1152,9 @@ async def coupon_search(
 
         top_results = candidates[:rerank_top_n]
 
-        logger.info(f"Re-ranked coupons for user {user_id}. Top score: {top_results[0]['score'] if top_results else 'N/A'}")
+        logger.info(
+            f"Re-ranked coupons for user {user_id}. Top score: {top_results[0]['score'] if top_results else 'N/A'}"
+        )
 
         if session_id:
             record_shopping_event(
@@ -1061,53 +1171,51 @@ async def coupon_search(
             )
             db.commit()
 
-        return JSONResponse({
-            "results": top_results,
-            "total_candidates": len(candidates)
-        }, status_code=200)
+        return JSONResponse(
+            {"results": top_results, "total_candidates": len(candidates)},
+            status_code=200,
+        )
 
     except Exception as e:
         logger.exception(f"Coupon search failed for user {user_id}: %s", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Search failed: {str(e)}"
+            detail=f"Search failed: {str(e)}",
         )
 
 
 # --- Product Search Endpoint ---
 
 # Search aliases
-PRODUCT_SEARCH_ALIASES = {
-    "multivitamins": "vitamins",
-    "multivitamin": "vitamin"
-}
+PRODUCT_SEARCH_ALIASES = {"multivitamins": "vitamins", "multivitamin": "vitamin"}
+
 
 @app.post("/api/products/search")
 @limiter.limit("30/minute")  # Rate limit: 30 searches per minute per IP
 async def product_search(
     request: Request,
     user: Dict[str, Any] = Depends(verify_token),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ) -> JSONResponse:
     """
     Search for products using full-text search.
-    
+
     Returns: { "products": [{ id, name, description, imageUrl, price, rating, ... }], "count": int }
     """
     try:
         payload = await request.json()
     except Exception:
         payload = {}
-    
+
     query = (payload or {}).get("query", "")
     limit = min(int(payload.get("limit", 10)), 50)  # Max 50 products
-    
+
     if not isinstance(query, str) or not query.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Missing 'query' in request body"
+            detail="Missing 'query' in request body",
         )
-    
+
     user_id = user["user_id"]
     session_id = get_shopping_session_id(request)
     if session_id:
@@ -1118,7 +1226,7 @@ async def product_search(
             store_id=get_selected_store_id_for_session(db, user_id),
         )
     logger.info(f"User {user_id} searching products with query: '{query}'")
-    
+
     # Clean query
     search_query = query.strip()
 
@@ -1126,7 +1234,7 @@ async def product_search(
     if search_query.lower() in PRODUCT_SEARCH_ALIASES:
         search_query = PRODUCT_SEARCH_ALIASES[search_query.lower()]
         logger.info(f"Applied alias: {query} -> {search_query}")
-    
+
     try:
         # Full-text search on products
         result = db.execute(
@@ -1142,11 +1250,11 @@ async def product_search(
                 ORDER BY rank DESC, rating DESC NULLS LAST
                 LIMIT :limit
             """),
-            {"query": search_query, "limit": limit}
+            {"query": search_query, "limit": limit},
         )
         rows = result.fetchall()
         logger.info(f"Product search returned {len(rows)} results")
-        
+
         if not rows:
             # Fallback to ILIKE if no FTS results
             logger.info("FTS returned no products. Falling back to ILIKE.")
@@ -1166,48 +1274,54 @@ async def product_search(
                     ORDER BY rating DESC NULLS LAST, review_count DESC NULLS LAST
                     LIMIT :limit
                 """),
-                {
-                    "pattern": f"%{search_query}%",
-                    "limit": limit
-                }
+                {"pattern": f"%{search_query}%", "limit": limit},
             )
             rows = result.fetchall()
             logger.info(f"ILIKE search returned {len(rows)} products")
-        
+
         # Build product list
         products = []
         for row in rows:
-            products.append({
-                "id": str(row[0]),
-                "name": row[1],
-                "description": row[2],
-                "imageUrl": row[3],
-                "price": float(row[4]) if row[4] else 0.0,
-                "rating": float(row[5]) if row[5] else None,
-                "reviewCount": row[6] if row[6] else 0,
-                "category": row[7],
-                "brand": row[8],
-                "promoText": row[9],
-                "inStock": row[10]
-            })
-        
+            products.append(
+                {
+                    "id": str(row[0]),
+                    "name": row[1],
+                    "description": row[2],
+                    "imageUrl": row[3],
+                    "price": float(row[4]) if row[4] else 0.0,
+                    "rating": float(row[5]) if row[5] else None,
+                    "reviewCount": row[6] if row[6] else 0,
+                    "category": row[7],
+                    "brand": row[8],
+                    "promoText": row[9],
+                    "inStock": row[10],
+                }
+            )
+
         if session_id:
             record_shopping_event(
                 db,
                 session_id=session_id,
                 user_id=user_id,
                 event_type="product_search",
-                payload={"query": query, "effective_query": search_query, "count": len(products), "limit": limit},
+                payload={
+                    "query": query,
+                    "effective_query": search_query,
+                    "count": len(products),
+                    "limit": limit,
+                },
             )
             db.commit()
 
-        return JSONResponse({"products": products, "count": len(products)}, status_code=200)
-    
+        return JSONResponse(
+            {"products": products, "count": len(products)}, status_code=200
+        )
+
     except Exception as e:
         logger.exception(f"Product search failed for user {user_id}: %s", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Product search failed: {str(e)}"
+            detail=f"Product search failed: {str(e)}",
         )
 
 
@@ -1218,19 +1332,19 @@ async def product_search_get(
     query: str = Query(..., min_length=1),
     limit: int = Query(10, ge=1, le=50),
     user: Dict[str, Any] = Depends(verify_token),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ) -> JSONResponse:
     """GET version of product search for easier testing"""
     user_id = user["user_id"]
     logger.info(f"User {user_id} searching products (GET) with query: '{query}'")
-    
+
     search_query = query.strip()
 
     # Apply aliases
     if search_query.lower() in PRODUCT_SEARCH_ALIASES:
         search_query = PRODUCT_SEARCH_ALIASES[search_query.lower()]
         logger.info(f"Applied alias: {query} -> {search_query}")
-    
+
     try:
         # Full-text search on products
         result = db.execute(
@@ -1246,10 +1360,10 @@ async def product_search_get(
                 ORDER BY rank DESC, rating DESC NULLS LAST
                 LIMIT :limit
             """),
-            {"query": search_query, "limit": limit}
+            {"query": search_query, "limit": limit},
         )
         rows = result.fetchall()
-        
+
         if not rows:
             # Fallback to ILIKE
             result = db.execute(
@@ -1268,33 +1382,37 @@ async def product_search_get(
                     ORDER BY rating DESC NULLS LAST, review_count DESC NULLS LAST
                     LIMIT :limit
                 """),
-                {"pattern": f"%{search_query}%", "limit": limit}
+                {"pattern": f"%{search_query}%", "limit": limit},
             )
             rows = result.fetchall()
-        
+
         products = []
         for row in rows:
-            products.append({
-                "id": str(row[0]),
-                "name": row[1],
-                "description": row[2],
-                "imageUrl": row[3],
-                "price": float(row[4]) if row[4] else 0.0,
-                "rating": float(row[5]) if row[5] else None,
-                "reviewCount": row[6] if row[6] else 0,
-                "category": row[7],
-                "brand": row[8],
-                "promoText": row[9],
-                "inStock": row[10]
-            })
-        
-        return JSONResponse({"products": products, "count": len(products)}, status_code=200)
+            products.append(
+                {
+                    "id": str(row[0]),
+                    "name": row[1],
+                    "description": row[2],
+                    "imageUrl": row[3],
+                    "price": float(row[4]) if row[4] else 0.0,
+                    "rating": float(row[5]) if row[5] else None,
+                    "reviewCount": row[6] if row[6] else 0,
+                    "category": row[7],
+                    "brand": row[8],
+                    "promoText": row[9],
+                    "inStock": row[10],
+                }
+            )
+
+        return JSONResponse(
+            {"products": products, "count": len(products)}, status_code=200
+        )
 
     except Exception as e:
         logger.exception(f"Product search (GET) failed for user {user_id}: %s", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Product search failed: {str(e)}"
+            detail=f"Product search failed: {str(e)}",
         )
 
 
@@ -1308,18 +1426,22 @@ async def list_products(
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
     user: Dict[str, Any] = Depends(verify_token),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ) -> JSONResponse:
     """
     B-5: List all products with optional filters.
     Returns: { "products": [...], "total": int, "limit": int, "offset": int }
     """
     user_id = user["user_id"]
-    logger.info(f"User {user_id} listing products (category={category}, brand={brand}, limit={limit})")
+    logger.info(
+        f"User {user_id} listing products (category={category}, brand={brand}, limit={limit})"
+    )
 
     try:
         # Build query with optional filters
-        query_parts = ["SELECT id, name, description, image_url, price, rating, review_count, category, brand, promo_text, in_stock FROM products WHERE in_stock = true"]
+        query_parts = [
+            "SELECT id, name, description, image_url, price, rating, review_count, category, brand, promo_text, in_stock FROM products WHERE in_stock = true"
+        ]
         params = {"limit": limit, "offset": offset}
 
         if category:
@@ -1330,7 +1452,9 @@ async def list_products(
             query_parts.append("AND LOWER(brand) = LOWER(:brand)")
             params["brand"] = brand
 
-        query_parts.append("ORDER BY rating DESC NULLS LAST, review_count DESC NULLS LAST")
+        query_parts.append(
+            "ORDER BY rating DESC NULLS LAST, review_count DESC NULLS LAST"
+        )
         query_parts.append("LIMIT :limit OFFSET :offset")
 
         result = db.execute(text(" ".join(query_parts)), params)
@@ -1351,33 +1475,33 @@ async def list_products(
 
         products = []
         for row in rows:
-            products.append({
-                "id": str(row[0]),
-                "name": row[1],
-                "description": row[2],
-                "imageUrl": row[3],
-                "price": float(row[4]) if row[4] else 0.0,
-                "rating": float(row[5]) if row[5] else None,
-                "reviewCount": row[6] or 0,
-                "category": row[7],
-                "brand": row[8],
-                "promoText": row[9],
-                "inStock": row[10]
-            })
+            products.append(
+                {
+                    "id": str(row[0]),
+                    "name": row[1],
+                    "description": row[2],
+                    "imageUrl": row[3],
+                    "price": float(row[4]) if row[4] else 0.0,
+                    "rating": float(row[5]) if row[5] else None,
+                    "reviewCount": row[6] or 0,
+                    "category": row[7],
+                    "brand": row[8],
+                    "promoText": row[9],
+                    "inStock": row[10],
+                }
+            )
 
         logger.info(f"Returning {len(products)} products (total: {total})")
-        return JSONResponse({
-            "products": products,
-            "total": total,
-            "limit": limit,
-            "offset": offset
-        }, status_code=200)
+        return JSONResponse(
+            {"products": products, "total": total, "limit": limit, "offset": offset},
+            status_code=200,
+        )
 
     except Exception as e:
         logger.exception(f"Failed to list products: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to list products: {str(e)}"
+            detail=f"Failed to list products: {str(e)}",
         )
 
 
@@ -1387,7 +1511,7 @@ async def product_recommendations(
     request: Request,
     limit: int = Query(5, ge=1, le=20),
     user: Dict[str, Any] = Depends(verify_token),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ) -> JSONResponse:
     """
     Get personalized product recommendations for user.
@@ -1427,7 +1551,7 @@ async def product_recommendations(
                 ORDER BY p.rating DESC NULLS LAST, p.review_count DESC NULLS LAST
                 LIMIT :limit
             """),
-            {"user_id": user_id, "limit": limit}
+            {"user_id": user_id, "limit": limit},
         )
         rows = result.fetchall()
 
@@ -1435,7 +1559,9 @@ async def product_recommendations(
 
         # If no personalized results, fallback to top-rated products
         if not rows:
-            logger.info(f"No personalized recommendations for user {user_id}, using top-rated fallback")
+            logger.info(
+                f"No personalized recommendations for user {user_id}, using top-rated fallback"
+            )
             result = db.execute(
                 text("""
                     SELECT
@@ -1447,38 +1573,45 @@ async def product_recommendations(
                     ORDER BY rating DESC NULLS LAST, review_count DESC NULLS LAST
                     LIMIT :limit
                 """),
-                {"limit": limit}
+                {"limit": limit},
             )
             rows = result.fetchall()
 
         products = []
         for row in rows:
-            products.append({
-                "id": str(row[0]),
-                "name": row[1],
-                "description": row[2],
-                "imageUrl": row[3],
-                "price": float(row[4]) if row[4] else 0.0,
-                "rating": float(row[5]) if row[5] else None,
-                "reviewCount": row[6] if row[6] else 0,
-                "category": row[7],
-                "brand": row[8],
-                "promoText": row[9],
-                "inStock": row[10]
-            })
+            products.append(
+                {
+                    "id": str(row[0]),
+                    "name": row[1],
+                    "description": row[2],
+                    "imageUrl": row[3],
+                    "price": float(row[4]) if row[4] else 0.0,
+                    "rating": float(row[5]) if row[5] else None,
+                    "reviewCount": row[6] if row[6] else 0,
+                    "category": row[7],
+                    "brand": row[8],
+                    "promoText": row[9],
+                    "inStock": row[10],
+                }
+            )
 
-        logger.info(f"Returning {len(products)} recommendations (personalized={personalized})")
-        return JSONResponse({
-            "products": products,
-            "count": len(products),
-            "personalized": personalized
-        }, status_code=200)
+        logger.info(
+            f"Returning {len(products)} recommendations (personalized={personalized})"
+        )
+        return JSONResponse(
+            {
+                "products": products,
+                "count": len(products),
+                "personalized": personalized,
+            },
+            status_code=200,
+        )
 
     except Exception as e:
         logger.exception(f"Recommendations failed for user {user_id}: %s", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get recommendations: {str(e)}"
+            detail=f"Failed to get recommendations: {str(e)}",
         )
 
 
@@ -1489,7 +1622,7 @@ async def get_product(
     request: Request,
     product_id: str,
     user: Dict[str, Any] = Depends(verify_token),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ) -> JSONResponse:
     """
     B-6: Get single product with inventory at user's selected store.
@@ -1505,7 +1638,7 @@ async def get_product(
         except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Product not found: {product_id}"
+                detail=f"Product not found: {product_id}",
             )
 
         # Get product details
@@ -1515,14 +1648,14 @@ async def get_product(
                 FROM products
                 WHERE id = :product_id
             """),
-            {"product_id": product_id}
+            {"product_id": product_id},
         )
         row = result.fetchone()
 
         if not row:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Product not found: {product_id}"
+                detail=f"Product not found: {product_id}",
             )
 
         product = {
@@ -1536,14 +1669,16 @@ async def get_product(
             "category": row[7],
             "brand": row[8],
             "promoText": row[9],
-            "inStock": row[10]
+            "inStock": row[10],
         }
 
         # Get inventory at user's selected store
         inventory = None
         store_result = db.execute(
-            text("SELECT selected_store_id FROM user_preferences WHERE user_id = :user_id"),
-            {"user_id": user_id}
+            text(
+                "SELECT selected_store_id FROM user_preferences WHERE user_id = :user_id"
+            ),
+            {"user_id": user_id},
         )
         store_row = store_result.fetchone()
 
@@ -1556,20 +1691,16 @@ async def get_product(
                     JOIN stores s ON si.store_id = s.id
                     WHERE si.store_id = :store_id AND si.product_id = :product_id
                 """),
-                {"store_id": store_id, "product_id": product_id}
+                {"store_id": store_id, "product_id": product_id},
             )
             inv_row = inv_result.fetchone()
             if inv_row:
-                inventory = {
-                    "available": inv_row[0] or 0,
-                    "store_name": inv_row[1]
-                }
+                inventory = {"available": inv_row[0] or 0, "store_name": inv_row[1]}
 
         logger.info(f"Returning product: {product['name']}")
-        return JSONResponse({
-            "product": product,
-            "inventory": inventory
-        }, status_code=200)
+        return JSONResponse(
+            {"product": product, "inventory": inventory}, status_code=200
+        )
 
     except HTTPException:
         raise
@@ -1577,9 +1708,8 @@ async def get_product(
         logger.exception(f"Failed to get product {product_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get product: {str(e)}"
+            detail=f"Failed to get product: {str(e)}",
         )
-
 
 
 @app.get("/api/coupons/wallet")
@@ -1587,7 +1717,7 @@ async def get_product(
 async def get_wallet_coupons(
     request: Request,
     user: Dict[str, Any] = Depends(verify_token),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ) -> JSONResponse:
     """
     Get all active coupons assigned to the authenticated user.
@@ -1629,8 +1759,10 @@ async def get_wallet_coupons(
                 "type": row.type,
                 "discount_details": row.discount_details,
                 "category_or_brand": row.category_or_brand,
-                "expiration_date": row.expiration_date.isoformat() if row.expiration_date else None,
-                "terms": row.terms
+                "expiration_date": row.expiration_date.isoformat()
+                if row.expiration_date
+                else None,
+                "terms": row.terms,
             }
             for row in rows
         ]
@@ -1639,28 +1771,34 @@ async def get_wallet_coupons(
         frontstore = [c for c in all_coupons if c["type"] == "frontstore"]
         category_brand = [c for c in all_coupons if c["type"] in ("category", "brand")]
 
-        logger.info(f"Wallet for user {user_id}: {len(frontstore)} frontstore, {len(category_brand)} category/brand")
+        logger.info(
+            f"Wallet for user {user_id}: {len(frontstore)} frontstore, {len(category_brand)} category/brand"
+        )
 
-        return JSONResponse({
-            "frontstore": frontstore,
-            "categoryBrand": category_brand,
-            "total": len(all_coupons)
-        })
+        return JSONResponse(
+            {
+                "frontstore": frontstore,
+                "categoryBrand": category_brand,
+                "total": len(all_coupons),
+            }
+        )
 
     except Exception as e:
         logger.exception(f"Wallet fetch failed for user {user_id}: %s", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch wallet coupons: {str(e)}"
+            detail=f"Failed to fetch wallet coupons: {str(e)}",
         )
 
 
 @app.post("/api/image-extract")
-@limiter.limit("30/minute")  # Rate limit: 30 requests per minute per IP (increased for AR mode)
+@limiter.limit(
+    "30/minute"
+)  # Rate limit: 30 requests per minute per IP (increased for AR mode)
 async def image_extract(
     request: Request,
     file: UploadFile = File(...),
-    user: Dict[str, Any] = Depends(verify_token)
+    user: Dict[str, Any] = Depends(verify_token),
 ) -> JSONResponse:
     """
     Image-based brand and category extraction using OpenAI Vision API (authenticated).
@@ -1676,14 +1814,13 @@ async def image_extract(
     if not api_key:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="OPENAI_API_KEY not configured"
+            detail="OPENAI_API_KEY not configured",
         )
 
     # Validate file
     if not file:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No image file provided"
+            status_code=status.HTTP_400_BAD_REQUEST, detail="No image file provided"
         )
 
     # Validate MIME type
@@ -1693,10 +1830,12 @@ async def image_extract(
     if content_type not in allowed_mimes:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid image type. Allowed: {', '.join(allowed_mimes)}"
+            detail=f"Invalid image type. Allowed: {', '.join(allowed_mimes)}",
         )
 
-    logger.info(f"User {user_id} uploaded image: {file.filename}, content_type: {content_type}")
+    logger.info(
+        f"User {user_id} uploaded image: {file.filename}, content_type: {content_type}"
+    )
 
     # Read file content
     try:
@@ -1704,8 +1843,7 @@ async def image_extract(
     except Exception as e:
         logger.exception("Failed to read uploaded image: %s", e)
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Failed to read image file"
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to read image file"
         )
 
     # Validate file size (max 5MB for images)
@@ -1713,19 +1851,19 @@ async def image_extract(
     if len(image_bytes) > max_size_mb * 1024 * 1024:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"Image file too large. Max {max_size_mb}MB allowed."
+            detail=f"Image file too large. Max {max_size_mb}MB allowed.",
         )
 
     if len(image_bytes) == 0:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Image file is empty"
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Image file is empty"
         )
 
     # Convert image to base64 for OpenAI Vision API
     try:
         import base64
-        base64_image = base64.b64encode(image_bytes).decode('utf-8')
+
+        base64_image = base64.b64encode(image_bytes).decode("utf-8")
 
         # Determine image format
         image_format = "jpeg"
@@ -1740,12 +1878,14 @@ async def image_extract(
         logger.exception("Failed to encode image: %s", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to process image"
+            detail="Failed to process image",
         )
 
     # Call OpenAI Vision API
     try:
-        logger.info(f"Initializing async OpenAI client for image analysis (user {user_id})")
+        logger.info(
+            f"Initializing async OpenAI client for image analysis (user {user_id})"
+        )
         client = get_async_openai_client()
 
         t_api_start = time.time()
@@ -1799,19 +1939,14 @@ CRITICAL INSTRUCTIONS:
 
 5. If multiple products visible, focus on the most prominent/centered one
 
-Return ONLY the JSON object, no additional text."""
+Return ONLY the JSON object, no additional text.""",
                         },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": data_url
-                            }
-                        }
-                    ]
+                        {"type": "image_url", "image_url": {"url": data_url}},
+                    ],
                 }
             ],
             max_tokens=400,  # Increased from 200 to allow detailed variant extraction
-            temperature=0.0  # Fully deterministic (changed from 0.1)
+            temperature=0.0,  # Fully deterministic (changed from 0.1)
         )
 
         t_api_end = time.time()
@@ -1823,11 +1958,11 @@ Return ONLY the JSON object, no additional text."""
         # Parse JSON response
         try:
             # Robust JSON extraction: Find first '{' and last '}'
-            start_idx = raw_content.find('{')
-            end_idx = raw_content.rfind('}')
-            
+            start_idx = raw_content.find("{")
+            end_idx = raw_content.rfind("}")
+
             if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
-                json_str = raw_content[start_idx:end_idx+1]
+                json_str = raw_content[start_idx : end_idx + 1]
                 parsed = json.loads(json_str)
             else:
                 parsed = json.loads(raw_content.strip())
@@ -1861,10 +1996,14 @@ Return ONLY the JSON object, no additional text."""
 
             search_query = " ".join(search_parts) if search_parts else ""
 
-            logger.info(f"Extracted: product={product_name}, brand={brand}, category={category}, variant_details={variant_details}, confidence={confidence}, query={search_query}")
+            logger.info(
+                f"Extracted: product={product_name}, brand={brand}, category={category}, variant_details={variant_details}, confidence={confidence}, query={search_query}"
+            )
 
         except (json.JSONDecodeError, KeyError, AttributeError) as parse_error:
-            logger.warning(f"Failed to parse Vision API response: {parse_error}. Raw: {raw_content}")
+            logger.warning(
+                f"Failed to parse Vision API response: {parse_error}. Raw: {raw_content}"
+            )
             # Return low confidence result
             product_name = None
             brand = None
@@ -1879,19 +2018,24 @@ Return ONLY the JSON object, no additional text."""
         total_duration_ms = int(t_total * 1000)
 
         if ENABLE_TIMING_LOGS:
-            logger.info(f"Image extraction completed for user {user_id}: {total_duration_ms}ms total (API: {api_duration_ms}ms)")
+            logger.info(
+                f"Image extraction completed for user {user_id}: {total_duration_ms}ms total (API: {api_duration_ms}ms)"
+            )
 
-        return JSONResponse({
-            "product_name": product_name,
-            "brand": brand,
-            "category": category,
-            "variant_details": variant_details,
-            "visible_text": visible_text,
-            "confidence": confidence,
-            "searchQuery": search_query,
-            "duration_ms": total_duration_ms,
-            "api_duration_ms": api_duration_ms
-        }, status_code=200)
+        return JSONResponse(
+            {
+                "product_name": product_name,
+                "brand": brand,
+                "category": category,
+                "variant_details": variant_details,
+                "visible_text": visible_text,
+                "confidence": confidence,
+                "searchQuery": search_query,
+                "duration_ms": total_duration_ms,
+                "api_duration_ms": api_duration_ms,
+            },
+            status_code=200,
+        )
 
     except Exception as e:
         logger.exception("OpenAI Vision API error: %s", e)
@@ -1904,16 +2048,21 @@ Return ONLY the JSON object, no additional text."""
             detail = f"OpenAI quota exceeded. Error: {error_msg}"
         elif "rate_limit" in error_msg.lower():
             detail = f"Rate limit exceeded. Please try again later. Error: {error_msg}"
-        elif "invalid_api_key" in error_msg.lower() or "authentication" in error_msg.lower() or "401" in error_msg:
+        elif (
+            "invalid_api_key" in error_msg.lower()
+            or "authentication" in error_msg.lower()
+            or "401" in error_msg
+        ):
             detail = f"Invalid OpenAI API key. Error: {error_msg}"
         elif "timeout" in error_msg.lower():
-            detail = f"Request timeout. Please try with smaller image. Error: {error_msg}"
+            detail = (
+                f"Request timeout. Please try with smaller image. Error: {error_msg}"
+            )
         else:
             detail = f"Image extraction failed ({error_type}): {error_msg}"
 
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=detail
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=detail
         )
 
 
@@ -1928,5 +2077,5 @@ if __name__ == "__main__":
         host=APP_HOST,
         port=APP_PORT,
         reload=False,
-        log_level=LOG_LEVEL.lower()
+        log_level=LOG_LEVEL.lower(),
     )
