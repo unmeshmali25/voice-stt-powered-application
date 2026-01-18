@@ -149,7 +149,7 @@ export function CartCoupons() {
                 )}
               </div>
 
-              {coupon.is_selected && !state.isLoading && (
+              {coupon.is_selected && (
                 <Badge variant="default" className="bg-green-600 text-[10px] h-5 shrink-0">
                   <CheckCircle2 className="h-3 w-3 mr-1" />
                   Applied
