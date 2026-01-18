@@ -1,0 +1,31 @@
+=== Debug Output BEFORE Changes ===
+Date: 2026-01-17
+User: unmeshmali@gmail.com
+
+Debug Script Output:
+Connecting to: postgresql://postgres.xrzpyapwnygdcjmcmnxg:Holmes%40221bbcde@aws-1-us-east-1.pooler.supabase.com:6543/postgres?sslmode=require
+DB NOW(): 2026-01-18 00:35:50.329895+00:00
+
+--- Specific Coupons Detail ---
+Desc: 15% off orders over $50
+  UC Status: active
+  UC Eligible Until: 2026-01-31 23:53:41.377806
+  C Expiration Date: 2026-06-30 00:00:00
+  C Is Active: True
+--------------------
+Desc: $25 off $125 purchase
+  UC Status: active
+  UC Eligible Until: 2026-01-31 23:53:41.377806
+  C Expiration Date: 2026-06-30 00:00:00
+  C Is Active: True
+--------------------
+
+Coupons with is_active = false:
+- None found in the specific coupons tested
+
+Coupons with is_active = true:
+- 15% off orders over $50 (ID: TBD from DB)
+- $25 off $125 purchase (ID: TBD from DB)
+
+Coupons with is_active = NULL:
+- None found in the specific coupons tested
