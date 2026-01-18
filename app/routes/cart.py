@@ -15,6 +15,7 @@ B-22: Coupon stacking logic (integrated)
 """
 
 import logging
+import time
 from typing import Dict, Any, List, Optional
 from collections import defaultdict
 from decimal import Decimal
@@ -1072,6 +1073,9 @@ async def add_coupon_to_cart(
     user_id = user["user_id"]
     coupon_id = request.coupon_id
 
+    # Performance timing
+    t_start = time.time()
+
     try:
         # Verify coupon exists and is assigned to user
         result = db.execute(
@@ -1131,6 +1135,9 @@ async def add_coupon_to_cart(
 
         db.commit()
 
+        # Performance timing
+        t_commit = time.time()
+
         coupon = {
             "id": str(coupon_row[0]),
             "type": coupon_row[1],
@@ -1157,7 +1164,17 @@ async def add_coupon_to_cart(
             }
         )
 
-        logger.info(f"User {user_id} added coupon {coupon_id} to cart")
+        # Performance timing
+        t_calc = time.time()
+        t_total = time.time()
+
+        logger.info(
+            f"User {user_id} added coupon {coupon_id} to cart - "
+            f"[TIMING] session:{t_commit - t_start:.3f}s "
+            f"commit:{t_calc - t_commit:.3f}s "
+            f"calc:{t_calc - t_commit:.3f}s "
+            f"total:{t_total - t_start:.3f}s"
+        )
         return JSONResponse(
             {
                 "success": True,
@@ -1192,6 +1209,9 @@ async def remove_coupon_from_cart(
     Returns: { "success": true }
     """
     user_id = user["user_id"]
+
+    # Performance timing
+    t_start = time.time()
 
     try:
         # Track interaction
@@ -1228,6 +1248,9 @@ async def remove_coupon_from_cart(
 
         db.commit()
 
+        # Performance timing
+        t_commit = time.time()
+
         # Calculate updated cart data in same request
         store_id = get_user_store_id(db, user_id)
         cart_data = (
@@ -1247,7 +1270,18 @@ async def remove_coupon_from_cart(
             }
         )
 
-        logger.info(f"User {user_id} removed coupon {coupon_id} from cart")
+        # Performance timing
+        t_calc = time.time()
+        t_total = time.time()
+
+        logger.info(
+            f"User {user_id} removed coupon {coupon_id} from cart - "
+            f"[TIMING] session:{t_commit - t_start:.3f}s "
+            f"commit:{t_calc - t_commit:.3f}s "
+            f"calc:{t_calc - t_commit:.3f}s "
+            f"total:{t_total - t_start:.3f}s"
+        )
+
         return JSONResponse(
             {
                 "success": True,

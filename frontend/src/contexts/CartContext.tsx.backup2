@@ -3,15 +3,12 @@ import { apiFetch } from '../lib/api';
 import { CartItem, CartSummary, Coupon } from '../types/retail';
 import { useAuth } from '../hooks/useAuth';
 import { useStore } from './StoreContext';
-import { isCacheValid, getCache, setCache, clearCache } from '../lib/cartCache';
 
 interface CartContextType {
   items: CartItem[];
   coupons: Coupon[];
   eligibleCoupons: Coupon[];
   ineligibleCoupons: Coupon[];
-  setEligibleCoupons: React.Dispatch<React.SetStateAction<Coupon[]>>;
-  setIneligibleCoupons: React.Dispatch<React.SetStateAction<Coupon[]>>;
   itemCount: number;
   summary: CartSummary | null;
   loading: boolean;
@@ -93,27 +90,11 @@ export function CartProvider({ children }: { children: ReactNode }) {
 
   const fetchEligibleCoupons = async () => {
     try {
-      // Check cache first
-      if (isCacheValid(items)) {
-        const cached = getCache();
-        if (cached) {
-          setEligibleCoupons(cached.eligibleCoupons);
-          setIneligibleCoupons(cached.ineligibleCoupons);
-          if (cached.summary) setSummary(cached.summary);
-          return;
-        }
-      }
-
-      // Fetch from API
       const response = await apiFetch('/api/coupons/eligible');
       if (response.ok) {
         const data = await response.json();
         setEligibleCoupons(data.eligible || []);
         setIneligibleCoupons(data.ineligible || []);
-        if (data.summary) setSummary(data.summary);
-
-        // Update cache
-        setCache(data.eligible || [], data.ineligible || [], data.summary, items);
       }
     } catch (error) {
       console.error('Failed to fetch eligible coupons:', error);
@@ -180,7 +161,6 @@ export function CartProvider({ children }: { children: ReactNode }) {
   };
 
   const addCoupon = async (couponId: string) => {
-    clearCache(); // Clear cache when cart changes
     setLoading(true);
     const perfStart = performance.now();
     try {
@@ -216,7 +196,6 @@ export function CartProvider({ children }: { children: ReactNode }) {
   };
 
   const removeCoupon = async (couponId: string) => {
-    clearCache(); // Clear cache when cart changes
     setLoading(true);
     const perfStart = performance.now();
     try {
@@ -275,8 +254,6 @@ export function CartProvider({ children }: { children: ReactNode }) {
         coupons,
         eligibleCoupons,
         ineligibleCoupons,
-        setEligibleCoupons,
-        setIneligibleCoupons,
         itemCount,
         summary,
         loading,
