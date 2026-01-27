@@ -138,7 +138,7 @@ export function CartCoupons() {
                   {coupon.discount_details}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  {coupon.type === 'frontstore' ? 'Store Offer' : coupon.category_or_brand}
+                  {coupon.type === 'frontstore' ? 'Basket-offers' : coupon.category_or_brand}
                 </p>
 
                 {state.error && (

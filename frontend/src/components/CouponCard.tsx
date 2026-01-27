@@ -58,7 +58,7 @@ export function CouponCard({ coupon, size = 'default' }: CouponCardProps) {
               isCompact ? 'text-[0.6rem] px-2 py-0.5' : ''
             }`}
           >
-            {coupon.type === 'frontstore' ? 'Front-store' : coupon.type.charAt(0).toUpperCase() + coupon.type.slice(1)}
+            {coupon.type === 'frontstore' ? 'Basket-offers' : coupon.type.charAt(0).toUpperCase() + coupon.type.slice(1)}
           </span>
         </div>
       </CardHeader>

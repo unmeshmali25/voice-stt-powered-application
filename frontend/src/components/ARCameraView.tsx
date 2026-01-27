@@ -234,7 +234,7 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
     setDetectedProduct(prev => (prev ? { ...prev, loading: false } : prev))
 
     const segmentSummary = [
-      hasFrontstore ? 'front-store' : null,
+      hasFrontstore ? 'basket-offers' : null,
       hasCategoryBrand ? 'category/brand' : null
     ]
       .filter(Boolean)
@@ -502,7 +502,7 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
                 <div>
                   <div className="flex items-center justify-between mb-2">
                     <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-300">
-                      Front-store Coupons
+                      Basket-offers
                     </h3>
                     <span className="text-xs text-gray-500">
                       {frontstoreCoupons.length}
@@ -510,7 +510,7 @@ export function ARCameraView({ onExit, onSearchTrigger }: ARCameraViewProps) {
                   </div>
                   {frontstoreCoupons.length === 0 ? (
                     <div className="rounded-lg border border-dashed border-gray-800/70 p-4 text-sm text-gray-500">
-                      No front-store coupons matched this scan yet.
+                      No basket-offers matched this scan yet.
                     </div>
                   ) : (
                     <div className="space-y-3">

@@ -177,7 +177,7 @@ export function MobileLayout() {
                   </h2>
                   
                   <div className="space-y-4">
-                    <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Front-store Offers</h3>
+                    <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Basket-offers</h3>
                     {isLoadingCoupons ? (
                       [...Array(2)].map((_, i) => <CouponCardSkeleton key={i} />)
                     ) : frontstoreCoupons.length > 0 ? (
@@ -185,7 +185,7 @@ export function MobileLayout() {
                         <CouponCard key={coupon.id} coupon={coupon} />
                       ))
                     ) : (
-                      <p className="text-sm text-muted-foreground italic">No front-store coupons available.</p>
+                      <p className="text-sm text-muted-foreground italic">No basket-offers available.</p>
                     )}
                   </div>
 

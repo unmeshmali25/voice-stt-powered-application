@@ -178,7 +178,7 @@ export function MainLayout() {
                       {isWalletView ? 'Coupons in Wallet' : 'Applicable Coupons'}
                     </h2>
                     <p className="text-xs text-muted-foreground">
-                      {isWalletView ? 'Front-store discounts' : 'Front-store offers matching your search'}
+                      {isWalletView ? 'Basket-offers discounts' : 'Basket-offers matching your search'}
                     </p>
                   </div>
                   <div className="space-y-4">
@@ -191,8 +191,8 @@ export function MainLayout() {
                     ) : frontstoreCoupons.length === 0 ? (
                       <div className="text-sm text-muted-foreground text-center py-8">
                         {hasSearched
-                          ? 'No frontstore coupons match your search'
-                          : (isWalletView ? 'No frontstore coupons in your wallet' : 'No frontstore coupons available')
+                          ? 'No basket-offers match your search'
+                          : (isWalletView ? 'No basket-offers in your wallet' : 'No basket-offers available')
                         }
                       </div>
                     ) : (
