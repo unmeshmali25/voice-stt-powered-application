@@ -17,6 +17,8 @@ import os
 import sys
 import uuid
 from pathlib import Path
+from typing import Optional
+from urllib.parse import quote_plus, urlparse, urlunparse, parse_qsl, urlencode, unquote
 
 # Load environment variables from .env files
 from dotenv import load_dotenv
@@ -38,39 +40,61 @@ from sqlalchemy.orm import sessionmaker
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
 def get_database_url():
-    """Get database URL from environment, handling special characters in password."""
+    """Get database URL from environment, properly handling special characters in password."""
     url = os.getenv("DATABASE_URL")
     if not url:
         raise ValueError("DATABASE_URL environment variable not set")
 
-    # Handle passwords with @ symbols by URL-encoding
-    # Format: postgresql://user:password@host:port/database
-    from urllib.parse import quote_plus, urlparse, urlunparse
+    # Robustly handle special characters in DB credentials by URL-encoding them
+    try:
+        parsed_db_url = urlparse(url)
+        # Only rebuild if we have a recognizable netloc and scheme
+        if parsed_db_url.scheme and parsed_db_url.netloc:
+            username = parsed_db_url.username or ""
+            password = parsed_db_url.password or ""
+            host = parsed_db_url.hostname or ""
+            port = parsed_db_url.port
 
-    # Parse the URL - but we need to handle @ in password specially
-    # Split on :// first
-    if "://" in url:
-        scheme, rest = url.split("://", 1)
+            # Encode username/password to safely handle characters like '@', ':', etc.
+            if username or password:
+                encoded_username = quote_plus(unquote(username))
+                encoded_password = quote_plus(unquote(password))
+                netloc = f"{encoded_username}:{encoded_password}@{host}"
+            else:
+                netloc = host
 
-        # Find the last @ which separates credentials from host
-        if "@" in rest:
-            # Split from the RIGHT to find host part
-            at_idx = rest.rfind("@")
-            credentials = rest[:at_idx]
-            host_part = rest[at_idx+1:]
+            if port:
+                netloc += f":{port}"
 
-            # Split credentials into user and password
-            if ":" in credentials:
-                user, password = credentials.split(":", 1)
-                # URL-encode the password to handle @ and other special chars
-                encoded_password = quote_plus(password)
-                url = f"{scheme}://{user}:{encoded_password}@{host_part}"
-                logger.info(f"Database URL processed (password encoded)")
+            # Ensure sslmode=require for hosted providers (e.g., Supabase)
+            query_params = dict(parse_qsl(parsed_db_url.query, keep_blank_values=True))
+            query_params.setdefault("sslmode", "require")
+
+            url = urlunparse(
+                (
+                    parsed_db_url.scheme,
+                    netloc,
+                    parsed_db_url.path,
+                    parsed_db_url.params,
+                    urlencode(query_params),
+                    parsed_db_url.fragment,
+                )
+            )
+            logger.info(f"Database URL processed (credentials encoded)")
+            logger.debug(
+                f"Username: {username}, Password length: {len(password)}, Host: {host}"
+            )
+    except Exception as e:
+        logger.warning(f"Failed to process database URL: {e}, using original")
+        # If anything goes wrong, fall back to the original DATABASE_URL
+        pass
 
     return url
 
@@ -144,7 +168,9 @@ def create_test_agents(session, count: int = 2):
     logger.info(f"Created {count} test agents")
 
 
-def seed_single_agent(session, agent_data: dict, force: bool = False, auto_commit: bool = True):
+def seed_single_agent(
+    session, agent_data: dict, force: bool = False, auto_commit: bool = True
+):
     """Seed a single agent into the database.
 
     Args:
@@ -157,36 +183,45 @@ def seed_single_agent(session, agent_data: dict, force: bool = False, auto_commi
 
     # Check if agent already exists
     existing = session.execute(
-        text("SELECT id, user_id FROM agents WHERE agent_id = :aid"),
-        {"aid": agent_id}
+        text("SELECT id, user_id FROM agents WHERE agent_id = :aid"), {"aid": agent_id}
     ).fetchone()
 
     if existing:
         if force:
             # Delete existing agent and user
             logger.info(f"Force mode: Deleting existing agent {agent_id}")
-            session.execute(text("DELETE FROM agents WHERE agent_id = :aid"), {"aid": agent_id})
-            session.execute(text("DELETE FROM users WHERE id = :uid"), {"uid": existing.user_id})
+            session.execute(
+                text("DELETE FROM agents WHERE agent_id = :aid"), {"aid": agent_id}
+            )
+            session.execute(
+                text("DELETE FROM users WHERE id = :uid"), {"uid": existing.user_id}
+            )
             session.commit()
         else:
-            logger.info(f"Agent {agent_id} already exists, skipping (use --force to overwrite)")
+            logger.info(
+                f"Agent {agent_id} already exists, skipping (use --force to overwrite)"
+            )
             return
 
     user_id = str(uuid.uuid4())
 
     # Create user entry
-    session.execute(text("""
+    session.execute(
+        text("""
         INSERT INTO users (id, email, full_name, created_at)
         VALUES (:id, :email, :name, NOW())
         ON CONFLICT (id) DO NOTHING
-    """), {
-        "id": user_id,
-        "email": f"{agent_id}@simulation.local",
-        "name": f"Agent {agent_id}",
-    })
+    """),
+        {
+            "id": user_id,
+            "email": f"{agent_id}@simulation.local",
+            "name": f"Agent {agent_id}",
+        },
+    )
 
     # Create agent entry with all columns
-    session.execute(text("""
+    session.execute(
+        text("""
         INSERT INTO agents (
             agent_id, user_id, generation_model, generated_at,
             age, age_group, gender, income_bracket, household_size, has_children, location_region,
@@ -206,53 +241,58 @@ def seed_single_agent(session, agent_data: dict, force: bool = False, auto_commi
             :coupon_affinity, :deal_seeking_behavior, :backstory, :sample_shopping_patterns,
             true, NOW()
         )
-    """), {
-        "agent_id": agent_id,
-        "user_id": user_id,
-        "generation_model": agent_data.get("generation_model", "test"),
-        "age": agent_data.get("age"),
-        "age_group": agent_data.get("age_group"),
-        "gender": agent_data.get("gender"),
-        "income_bracket": agent_data.get("income_bracket"),
-        "household_size": agent_data.get("household_size"),
-        "has_children": agent_data.get("has_children", False),
-        "location_region": agent_data.get("location_region"),
-        "price_sensitivity": agent_data.get("price_sensitivity"),
-        "brand_loyalty": agent_data.get("brand_loyalty"),
-        "impulsivity": agent_data.get("impulsivity"),
-        "tech_savviness": agent_data.get("tech_savviness"),
-        "preferred_categories": agent_data.get("preferred_categories"),
-        "weekly_budget": agent_data.get("weekly_budget"),
-        "shopping_frequency": agent_data.get("shopping_frequency"),
-        "avg_cart_value": agent_data.get("avg_cart_value"),
-        "pref_day_weekday": agent_data.get("pref_day_weekday"),
-        "pref_day_saturday": agent_data.get("pref_day_saturday"),
-        "pref_day_sunday": agent_data.get("pref_day_sunday"),
-        "pref_time_morning": agent_data.get("pref_time_morning"),
-        "pref_time_afternoon": agent_data.get("pref_time_afternoon"),
-        "pref_time_evening": agent_data.get("pref_time_evening"),
-        "coupon_affinity": agent_data.get("coupon_affinity"),
-        "deal_seeking_behavior": agent_data.get("deal_seeking_behavior"),
-        "backstory": agent_data.get("backstory"),
-        "sample_shopping_patterns": agent_data.get("sample_shopping_patterns"),
-    })
+    """),
+        {
+            "agent_id": agent_id,
+            "user_id": user_id,
+            "generation_model": agent_data.get("generation_model", "test"),
+            "age": agent_data.get("age"),
+            "age_group": agent_data.get("age_group"),
+            "gender": agent_data.get("gender"),
+            "income_bracket": agent_data.get("income_bracket"),
+            "household_size": agent_data.get("household_size"),
+            "has_children": agent_data.get("has_children", False),
+            "location_region": agent_data.get("location_region"),
+            "price_sensitivity": agent_data.get("price_sensitivity"),
+            "brand_loyalty": agent_data.get("brand_loyalty"),
+            "impulsivity": agent_data.get("impulsivity"),
+            "tech_savviness": agent_data.get("tech_savviness"),
+            "preferred_categories": agent_data.get("preferred_categories"),
+            "weekly_budget": agent_data.get("weekly_budget"),
+            "shopping_frequency": agent_data.get("shopping_frequency"),
+            "avg_cart_value": agent_data.get("avg_cart_value"),
+            "pref_day_weekday": agent_data.get("pref_day_weekday"),
+            "pref_day_saturday": agent_data.get("pref_day_saturday"),
+            "pref_day_sunday": agent_data.get("pref_day_sunday"),
+            "pref_time_morning": agent_data.get("pref_time_morning"),
+            "pref_time_afternoon": agent_data.get("pref_time_afternoon"),
+            "pref_time_evening": agent_data.get("pref_time_evening"),
+            "coupon_affinity": agent_data.get("coupon_affinity"),
+            "deal_seeking_behavior": agent_data.get("deal_seeking_behavior"),
+            "backstory": agent_data.get("backstory"),
+            "sample_shopping_patterns": agent_data.get("sample_shopping_patterns"),
+        },
+    )
 
     if auto_commit:
         session.commit()
     logger.info(f"Created agent {agent_id} with user_id {user_id}")
 
 
-def seed_from_excel(session, excel_path: str, count: int = None, force: bool = False):
+def seed_from_excel(
+    session, excel_path: str, count: Optional[int] = None, force: bool = False
+):
     """Seed agents from persona Excel or JSON file."""
     if not os.path.exists(excel_path):
         raise FileNotFoundError(f"File not found: {excel_path}")
 
     # Check if it's a JSON file
-    if excel_path.endswith('.json'):
+    if excel_path.endswith(".json"):
         import json
-        with open(excel_path, 'r') as f:
+
+        with open(excel_path, "r") as f:
             data = json.load(f)
-        personas = data.get('personas', [])
+        personas = data.get("personas", [])
         logger.info(f"Found {len(personas)} personas in JSON file")
     else:
         # Read from "All Attributes" sheet as base
@@ -267,7 +307,9 @@ def seed_from_excel(session, excel_path: str, count: int = None, force: bool = F
         try:
             backstories_df = pd.read_excel(excel_path, sheet_name="Backstories")
             # Rename columns to match our schema
-            backstories_df = backstories_df.rename(columns={"Agent ID": "agent_id", "Backstory": "backstory"})
+            backstories_df = backstories_df.rename(
+                columns={"Agent ID": "agent_id", "Backstory": "backstory"}
+            )
             backstories_df = backstories_df[["agent_id", "backstory"]]
             df = df.merge(backstories_df, on="agent_id", how="left")
             logger.info(f"Merged backstories from 'Backstories' sheet")
@@ -278,14 +320,19 @@ def seed_from_excel(session, excel_path: str, count: int = None, force: bool = F
         try:
             patterns_df = pd.read_excel(excel_path, sheet_name="Shopping Patterns")
             # Rename columns to match our schema
-            patterns_df = patterns_df.rename(columns={"Agent ID": "agent_id", "Shopping Patterns": "sample_shopping_patterns"})
+            patterns_df = patterns_df.rename(
+                columns={
+                    "Agent ID": "agent_id",
+                    "Shopping Patterns": "sample_shopping_patterns",
+                }
+            )
             patterns_df = patterns_df[["agent_id", "sample_shopping_patterns"]]
             df = df.merge(patterns_df, on="agent_id", how="left")
             logger.info(f"Merged shopping patterns from 'Shopping Patterns' sheet")
         except Exception as e:
             logger.warning(f"Could not merge shopping patterns: {e}")
 
-        personas = df.to_dict('records')
+        personas = df.to_dict("records")
         logger.info(f"Found {len(personas)} personas in Excel file (with merged data)")
 
     # Limit count if specified
@@ -305,7 +352,9 @@ def seed_from_excel(session, excel_path: str, count: int = None, force: bool = F
             # Commit every batch_size agents
             if (idx + 1) % batch_size == 0:
                 session.commit()
-                logger.info(f"Progress: Seeded {seeded_count}/{len(personas)} agents (committed batch)")
+                logger.info(
+                    f"Progress: Seeded {seeded_count}/{len(personas)} agents (committed batch)"
+                )
         except Exception as e:
             logger.error(f"Failed to seed agent {agent_data.get('agent_id')}: {e}")
             session.rollback()
@@ -320,10 +369,21 @@ def seed_from_excel(session, excel_path: str, count: int = None, force: bool = F
 
 def main():
     parser = argparse.ArgumentParser(description="Seed simulation agents into database")
-    parser.add_argument("file_path", nargs="?", help="Path to persona Excel or JSON file")
-    parser.add_argument("--test", action="store_true", help="Create test agents from hardcoded data")
-    parser.add_argument("--count", type=int, default=None, help="Number of agents to seed (default: all)")
-    parser.add_argument("--force", action="store_true", help="Delete and recreate existing agents")
+    parser.add_argument(
+        "file_path", nargs="?", help="Path to persona Excel or JSON file"
+    )
+    parser.add_argument(
+        "--test", action="store_true", help="Create test agents from hardcoded data"
+    )
+    parser.add_argument(
+        "--count",
+        type=int,
+        default=None,
+        help="Number of agents to seed (default: all)",
+    )
+    parser.add_argument(
+        "--force", action="store_true", help="Delete and recreate existing agents"
+    )
 
     args = parser.parse_args()
 
