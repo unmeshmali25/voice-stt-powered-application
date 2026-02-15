@@ -41,3 +41,5 @@ rich>=13.0.0            # CLI dashboard
 click>=8.0.0            # CLI framework
 aiohttp>=3.9.0          # Async HTTP for LLM APIs
 anthropic>=0.40.0       # Claude API support
+langgraph>=1.0.0        # Agent graph orchestration
+langsmith>=0.7.0        # Tracing for langgraph
