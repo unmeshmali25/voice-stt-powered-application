@@ -28,10 +28,13 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 FREQUENCY_PROBABILITY = {
-    "frequent": 0.70,  # 2-3x per week
-    "regular": 0.40,  # weekly
-    "occasional": 0.20,  # biweekly
-    "rare": 0.05,  # monthly
+    # Hourly probabilities derived from daily targets using:
+    # p_hourly = 1 - (1 - p_daily)^(1/24)
+    # Simulation runs hourly cycles, so we need hourly rates
+    "frequent": 0.019,  # ~0.43/day = 2-3x/week (~3.2 sessions/week)
+    "regular": 0.007,  # ~0.14/day = ~1x/week (~1.2 sessions/week)
+    "occasional": 0.003,  # ~0.07/day = biweekly (~0.5 sessions/week)
+    "rare": 0.001,  # ~0.02/day = monthly (~0.14 sessions/week)
 }
 
 
@@ -54,7 +57,7 @@ def decide_shop_node(state: AgentState) -> dict:
     """
     # Base probability from shopping frequency
     frequency = state.get("shopping_frequency", "regular")
-    base_prob = FREQUENCY_PROBABILITY.get(frequency, 0.30)
+    base_prob = FREQUENCY_PROBABILITY.get(frequency, 0.014)  # Default ~0.30 daily
 
     # Day-of-week modifier
     simulated_date = state.get("simulated_date")
