@@ -7,6 +7,9 @@
 .env.*
 # All env files including templates and examples (keep them local only)
 
+# Custom environment scripts
+claude_code_zai_env.sh
+
 # =============================================================================
 # PYTHON
 # =============================================================================
