@@ -161,6 +161,9 @@ data/tmp/
 !data/sqlite/.gitkeep
 !data/index/.gitkeep
 
+# Simulation runs - keep all files inside this directory
+!simulation_runs/**
+
 *.xlsx
 *.csv
 *.json
@@ -320,3 +323,9 @@ frontend/dist/
 
 # All images
 *.jpg
+
+# =============================================================================
+# EXCEPTIONS - Keep these files in specific directories
+# =============================================================================
+# Keep all files in simulation_runs directory
+!simulation_runs/**
