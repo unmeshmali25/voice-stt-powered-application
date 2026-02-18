@@ -43,6 +43,7 @@ from app.simulation.rate_limiter import get_rate_limiter, get_rate_limiter_metri
 from app.simulation.parallel_executor import ParallelAgentExecutor, WarmupController
 from app.simulation.checkpoint import CheckpointManager
 from app.simulation.monitoring import LatencyTracker, MemoryMonitor, CircuitBreaker
+from app.simulation.run_recorder import record_simulation_run
 
 logger = logging.getLogger(__name__)
 
@@ -241,10 +242,14 @@ class SimulationOrchestrator:
         self.circuit_breaker: Optional[CircuitBreaker] = None
 
         # Checkpoint manager
-        self.checkpoint_manager = CheckpointManager(
-            checkpoint_dir=Path("./data/checkpoints"),
-            save_interval_cycles=checkpoint_interval,
-        ) if checkpoint_interval > 0 else None
+        self.checkpoint_manager = (
+            CheckpointManager(
+                checkpoint_dir=Path("./data/checkpoints"),
+                save_interval_cycles=checkpoint_interval,
+            )
+            if checkpoint_interval > 0
+            else None
+        )
 
         # Parallel executor (initialized later when we know db_url)
         self.parallel_executor: Optional[ParallelAgentExecutor] = None
@@ -266,7 +271,9 @@ class SimulationOrchestrator:
             total_agents=agent_count,
             on_open_callback=self._on_circuit_open,
         )
-        logger.info(f"Circuit breaker initialized: threshold={self.circuit_breaker.failure_threshold}")
+        logger.info(
+            f"Circuit breaker initialized: threshold={self.circuit_breaker.failure_threshold}"
+        )
 
         # Warmup controller
         if self.warmup_cycles > 0:
@@ -294,7 +301,9 @@ class SimulationOrchestrator:
         self._paused = True
         self.console.print("\n[red bold]=" * 60)
         self.console.print("[red bold]CIRCUIT BREAKER OPEN - Simulation PAUSED")
-        self.console.print(f"[red]Failures this cycle: {circuit_breaker.cycle_failures}")
+        self.console.print(
+            f"[red]Failures this cycle: {circuit_breaker.cycle_failures}"
+        )
         self.console.print(f"[red]Threshold: {circuit_breaker.failure_threshold} (5%)")
         self.console.print("[yellow]Press 'r' to resume after investigating the issue")
         self.console.print("[red bold]=" * 60 + "\n")
@@ -316,7 +325,9 @@ class SimulationOrchestrator:
             f.write(f"[{datetime.now()}]\n{error_msg}\n")
             f.write("-" * 80 + "\n\n")
 
-    def _validate_agent_availability(self, required_count: Optional[int] = None) -> tuple[bool, str]:
+    def _validate_agent_availability(
+        self, required_count: Optional[int] = None
+    ) -> tuple[bool, str]:
         """
         Pre-flight check for agent availability.
 
@@ -356,7 +367,9 @@ class SimulationOrchestrator:
                 )
 
             # Success
-            logger.info(f"✓ Agent validation passed: {actual_count} active agents available")
+            logger.info(
+                f"✓ Agent validation passed: {actual_count} active agents available"
+            )
             return True, ""
 
         except Exception as e:
@@ -402,14 +415,16 @@ class SimulationOrchestrator:
 
         # Extract agent IDs from loaded agents for scheduler filtering
         # This ensures when using --num-agents, only those agents get offers
-        loaded_agent_ids = [a.get('agent_id') for a in agents]
+        loaded_agent_ids = [a.get("agent_id") for a in agents]
         self.agent_ids = loaded_agent_ids
         logger.info(f"Agent filtering configured:")
         logger.info(f"  - Loaded agents: {len(agents)}")
         logger.info(f"  - Agent IDs for scheduler: {len(self.agent_ids)}")
         logger.info(f"  - Process all agents flag: {self.process_all_agents}")
         if not self.process_all_agents:
-            logger.info(f"  ✓ Only these {len(self.agent_ids)} agents will receive offers")
+            logger.info(
+                f"  ✓ Only these {len(self.agent_ids)} agents will receive offers"
+            )
 
         # Initialize scaling components that depend on agent count
         self._initialize_scaling_components(len(agents))
@@ -430,7 +445,9 @@ class SimulationOrchestrator:
             logger.info(
                 f"Simulation started. Active: {self.scheduler.time_service.is_simulation_active()}"
             )
-            should_initialize = True  # Track if this is a fresh start (for initialization)
+            should_initialize = (
+                True  # Track if this is a fresh start (for initialization)
+            )
         else:
             logger.warning(
                 "Simulation already active, skipping start_simulation() call"
@@ -448,7 +465,7 @@ class SimulationOrchestrator:
                 init_result = self.scheduler.initialize_all_agents(
                     agent_ids=self.agent_ids,
                     process_all=self.process_all_agents,
-                    should_stop_check=lambda: self._stop_requested
+                    should_stop_check=lambda: self._stop_requested,
                 )
 
                 # Check if initialization was aborted
@@ -473,6 +490,7 @@ class SimulationOrchestrator:
             except Exception as e:
                 logger.error(f"Failed to initialize agents: {e}")
                 import traceback
+
                 traceback.print_exc()
                 # Continue anyway - the refresh logic will catch them later
 
@@ -513,6 +531,10 @@ class SimulationOrchestrator:
 
         logger.info(f"Simulation complete. Stats: {self.stats.to_dict()}")
 
+        run_dir = self._record_run()
+        if run_dir:
+            self.console.print(f"\n[green]Run recorded to: {run_dir}[/green]")
+
         if self.stats.errors > 0:
             self.console.print(f"\n[red]⚠ {self.stats.errors} error(s) occurred[/red]")
             self.console.print(f"[dim]Check {self._error_log_path} for details[/dim]")
@@ -527,10 +549,14 @@ class SimulationOrchestrator:
         def handle_interrupt(signum, frame):
             """Handle Ctrl+C and Ctrl+Z."""
             if signum == signal.SIGINT:
-                self.console.print("\n[yellow]⚠ Ctrl+C detected - Stopping simulation immediately...[/yellow]")
+                self.console.print(
+                    "\n[yellow]⚠ Ctrl+C detected - Stopping simulation immediately...[/yellow]"
+                )
                 self.request_stop()
             elif signum == signal.SIGTSTP:
-                self.console.print("\n[yellow]⚠ Ctrl+Z detected - Stopping simulation immediately...[/yellow]")
+                self.console.print(
+                    "\n[yellow]⚠ Ctrl+Z detected - Stopping simulation immediately...[/yellow]"
+                )
                 self.request_stop()
 
         signal.signal(signal.SIGINT, handle_interrupt)
@@ -586,7 +612,9 @@ class SimulationOrchestrator:
                 self.warmup_controller.advance()
 
             # Save checkpoint if needed
-            if self.checkpoint_manager and self.checkpoint_manager.should_save(self.stats.cycles_completed):
+            if self.checkpoint_manager and self.checkpoint_manager.should_save(
+                self.stats.cycles_completed
+            ):
                 try:
                     self.checkpoint_manager.save(self, self.stats.cycles_completed)
                 except Exception as e:
@@ -667,7 +695,9 @@ class SimulationOrchestrator:
             self.stats.errors += cycle_result.errors
 
             if cycle_result.errors > 0:
-                self.stats.last_error = f"Cycle {self.stats.cycles_completed}: {cycle_result.errors} errors"
+                self.stats.last_error = (
+                    f"Cycle {self.stats.cycles_completed}: {cycle_result.errors} errors"
+                )
 
             # Log progress
             logger.info(
@@ -683,7 +713,9 @@ class SimulationOrchestrator:
             for agent in agents:
                 # Check for stop request on every agent (immediate abort)
                 if self._stop_requested:
-                    logger.info(f"Stop requested, aborting cycle after {self.stats.agents_processed} agents")
+                    logger.info(
+                        f"Stop requested, aborting cycle after {self.stats.agents_processed} agents"
+                    )
                     return
 
                 self.stats.agents_processed += 1
@@ -768,7 +800,7 @@ class SimulationOrchestrator:
                 ORDER BY RANDOM()
                 LIMIT :limit
             """),
-                {"limit": num_agents}
+                {"limit": num_agents},
             )
         elif agent_ids:
             logger.info(f"Loading specific agents: {agent_ids}")
@@ -810,6 +842,45 @@ class SimulationOrchestrator:
         """Get a default store ID."""
         result = self.db.execute(text("SELECT id FROM stores LIMIT 1")).fetchone()
         return str(result[0]) if result else "00000000-0000-0000-0000-000000000001"
+
+    def _record_run(self) -> Optional[Path]:
+        """Record the simulation run to a structured directory."""
+        try:
+            config = {
+                "time_scale": self.time_scale,
+                "default_store_id": self.default_store_id,
+                "process_all_agents": self.process_all_agents,
+                "rate_limit_rps": self.rate_limit_rps,
+                "checkpoint_interval": self.checkpoint_interval,
+                "mode": "parallel" if self.parallel_mode else "sequential",
+            }
+
+            performance = {}
+            if self.latency_tracker:
+                stats = self.latency_tracker.get_stats("agent")
+                performance["latency_p50_ms"] = int(stats.p50)
+                performance["latency_p95_ms"] = int(stats.p95)
+            if self.rate_limiter:
+                performance["requests_total"] = self.stats.agents_processed
+            if self.circuit_breaker:
+                performance["circuit_breaker_state"] = (
+                    "open" if self.circuit_breaker.is_open else "closed"
+                )
+
+            checkpoint_path = None
+            if self.checkpoint_manager:
+                checkpoint_path = self.checkpoint_manager.find_latest()
+
+            run_dir = record_simulation_run(
+                stats=self.stats,
+                config=config,
+                checkpoint_path=checkpoint_path,
+                performance=performance,
+            )
+            return run_dir
+        except Exception as e:
+            logger.warning(f"Failed to record run: {e}")
+            return None
 
     def _build_dashboard(self) -> Panel:
         """Build Rich dashboard panel."""
@@ -871,7 +942,9 @@ class SimulationOrchestrator:
         if self.circuit_breaker:
             cb_status = self.circuit_breaker.get_status()
             if cb_status["state"] == "open":
-                table.add_row("Circuit Breaker", "[red bold]OPEN[/red bold]", style="red")
+                table.add_row(
+                    "Circuit Breaker", "[red bold]OPEN[/red bold]", style="red"
+                )
             else:
                 table.add_row("Circuit Breaker", "Closed", style="green")
 
@@ -890,7 +963,12 @@ class SimulationOrchestrator:
 
         subtitle = f"Time Scale: {self.time_scale}x | LangSmith: {'ON' if os.getenv('LANGCHAIN_TRACING_V2') else 'OFF'}"
 
-        return Panel(table, title=title, subtitle=subtitle, border_style="blue" if not self._paused else "red")
+        return Panel(
+            table,
+            title=title,
+            subtitle=subtitle,
+            border_style="blue" if not self._paused else "red",
+        )
 
     def _build_debug_dashboard(self) -> Panel:
         """Build dashboard with debug logs."""
@@ -1065,7 +1143,9 @@ async def run_simulation(
                     checkpoint_path = orchestrator.checkpoint_manager.find_latest()
 
                 if checkpoint_path and checkpoint_path.exists():
-                    orchestrator.checkpoint_manager.resume(checkpoint_path, orchestrator)
+                    orchestrator.checkpoint_manager.resume(
+                        checkpoint_path, orchestrator
+                    )
                     logger.info(f"Resumed from checkpoint: {checkpoint_path}")
                 else:
                     logger.warning("No checkpoint found to resume from, starting fresh")
@@ -1084,7 +1164,10 @@ async def run_simulation(
         )
     finally:
         # Cleanup parallel executor if used
-        if hasattr(orchestrator, 'parallel_executor') and orchestrator.parallel_executor:
+        if (
+            hasattr(orchestrator, "parallel_executor")
+            and orchestrator.parallel_executor
+        ):
             orchestrator.parallel_executor.shutdown()
         db.close()
 
