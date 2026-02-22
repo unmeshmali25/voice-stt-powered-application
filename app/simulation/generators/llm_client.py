@@ -1,8 +1,10 @@
 """
-Multi-provider LLM client for persona generation.
+Multi-provider LLM client for persona generation and agent decisions.
 
-Supports OpenRouter, OpenAI, and Anthropic (Claude) APIs.
-Provides unified interface with retry logic and error handling.
+Supports OpenRouter, OpenAI, Anthropic (Claude), and Ollama APIs.
+Provides unified interface with retry logic, batching, and error handling.
+
+Optimized for qwen3:4b local inference with configurable batch sizes and timeouts.
 """
 
 import asyncio
@@ -40,10 +42,7 @@ class CostTracker:
         self.total_cost_usd += usage_info["cost_usd"]
         self.total_tokens += usage_info["total_tokens"]
         self.total_time_seconds += usage_info["time_seconds"]
-        self.per_persona_costs.append({
-            "agent_id": agent_id,
-            **usage_info
-        })
+        self.per_persona_costs.append({"agent_id": agent_id, **usage_info})
 
     def get_summary(self) -> dict:
         """Get summary of all tracked usage."""
@@ -51,25 +50,44 @@ class CostTracker:
             "total_cost_usd": self.total_cost_usd,
             "total_tokens": self.total_tokens,
             "total_time_seconds": self.total_time_seconds,
-            "avg_cost_per_persona": self.total_cost_usd / len(self.per_persona_costs) if self.per_persona_costs else 0,
-            "avg_time_per_persona": self.total_time_seconds / len(self.per_persona_costs) if self.per_persona_costs else 0,
+            "avg_cost_per_persona": self.total_cost_usd / len(self.per_persona_costs)
+            if self.per_persona_costs
+            else 0,
+            "avg_time_per_persona": self.total_time_seconds
+            / len(self.per_persona_costs)
+            if self.per_persona_costs
+            else 0,
             "per_persona_details": self.per_persona_costs,
         }
 
 
 class LLMClient:
     """
-    Multi-provider LLM client supporting OpenRouter, OpenAI, and Claude.
+    Multi-provider LLM client supporting OpenRouter, OpenAI, Claude, and Ollama.
 
     Usage:
         config = SimulationConfig()
         client = LLMClient(config)
         response = await client.complete("Generate a persona...")
+
+        # Batch processing with Ollama
+        responses = await client.batch_complete([prompt1, prompt2, ...], batch_size=8)
     """
+
+    # Ollama-optimized settings for qwen3:4b
+    OLLAMA_CONFIG = {
+        "temperature": 0.1,  # Low for consistent JSON parsing
+        "max_tokens": 200,  # Short responses for decisions
+        "timeout": 30,  # Generous timeout for local LLM
+        "batch_size": 8,  # Concurrent requests (balance speed vs memory)
+        "context_window": 8192,  # Safe limit for 4B model
+        "base_url": "http://localhost:11434",  # Default Ollama URL
+    }
 
     def __init__(self, config: SimulationConfig):
         self.config = config
         self._openai_client: Optional[AsyncOpenAI] = None
+        self._ollama_session: Optional[aiohttp.ClientSession] = None
 
     def _get_openai_client(self) -> AsyncOpenAI:
         """Get or create OpenAI client (also works for OpenRouter)."""
@@ -130,28 +148,54 @@ class LLMClient:
 
                 try:
                     if self.config.llm_provider in ("openrouter", "openai"):
-                        response = await self._openai_complete_with_model(current_model, prompt, max_tokens, temperature)
+                        response = await self._openai_complete_with_model(
+                            current_model, prompt, max_tokens, temperature
+                        )
+                        # Extract usage from response
+                        usage_info = self._extract_usage(
+                            response, current_model, start_time
+                        )
+                        return response.choices[0].message.content, usage_info
                     elif self.config.llm_provider == "claude":
-                        response = await self._claude_complete_with_model(current_model, prompt, max_tokens, temperature)
+                        response = await self._claude_complete_with_model(
+                            current_model, prompt, max_tokens, temperature
+                        )
+                        # Claude response has different structure
+                        usage_info = self._extract_usage(
+                            response, current_model, start_time
+                        )
+                        # Extract text from Claude's content array
+                        response_text = ""
+                        if hasattr(response, "content") and response.content:
+                            response_text = (
+                                response.content[0].text
+                                if hasattr(response.content[0], "text")
+                                else str(response.content[0])
+                            )
+                        return response_text, usage_info
                     else:
-                        raise ValueError(f"Unknown provider: {self.config.llm_provider}")
-
-                    # Extract usage from response
-                    usage_info = self._extract_usage(response, current_model, start_time)
-                    return response.choices[0].message.content, usage_info
+                        raise ValueError(
+                            f"Unknown provider: {self.config.llm_provider}"
+                        )
 
                 except Exception as e:
                     if retry_attempt == self.config.max_retries - 1:
-                        logger.warning(f"All retries failed for model {current_model}: {e}")
+                        logger.warning(
+                            f"All retries failed for model {current_model}: {e}"
+                        )
                         # Try next fallback model
                         if not self.config.advance_fallback_model():
-                            raise RuntimeError(f"LLM generation failed. All models exhausted. Last error: {e}") from e
+                            raise RuntimeError(
+                                f"LLM generation failed. All models exhausted. Last error: {e}"
+                            ) from e
                         logger.info(f"Falling back to next model: {self.config.model}")
                         break
                     else:
                         # Exponential backoff for retry
                         delay = self.config.retry_delay * (2**retry_attempt)
-                        logger.warning(f"Retry {retry_attempt + 1}/{self.config.max_retries} for {current_model} in {delay}s: {e}")
+                        logger.warning(
+                            f"Retry {retry_attempt + 1}/{self.config.max_retries} for {current_model} in {delay}s: {e}"
+                        )
                         await asyncio.sleep(delay)
 
         # Should never reach here
@@ -199,6 +243,172 @@ class LLMClient:
 
         return response
 
+    def _get_ollama_session(self) -> aiohttp.ClientSession:
+        """Get or create aiohttp session for Ollama."""
+        if self._ollama_session is None or self._ollama_session.closed:
+            self._ollama_session = aiohttp.ClientSession()
+        return self._ollama_session
+
+    async def _ollama_complete(
+        self,
+        model: str,
+        prompt: str,
+        max_tokens: int,
+        temperature: float,
+        system: Optional[str] = None,
+        timeout: Optional[float] = None,
+    ) -> Tuple[str, dict]:
+        """
+        Generate completion using local Ollama API.
+
+        Optimized for qwen3:4b with proper timeout handling.
+
+        Args:
+            model: Ollama model name (e.g., "qwen3:4b")
+            prompt: The prompt to send
+            max_tokens: Maximum tokens in response
+            temperature: Sampling temperature
+            system: Optional system message
+            timeout: Request timeout in seconds (default: 30)
+
+        Returns:
+            Tuple of (response_text, usage_info)
+        """
+        session = self._get_ollama_session()
+        url = f"{self.OLLAMA_CONFIG['base_url']}/api/generate"
+
+        # Build prompt with system message if provided
+        full_prompt = prompt
+        if system:
+            full_prompt = f"{system}\n\n{prompt}"
+
+        payload = {
+            "model": model,
+            "prompt": full_prompt,
+            "stream": False,
+            "options": {
+                "temperature": temperature,
+                "num_predict": max_tokens,
+            },
+        }
+
+        request_timeout = timeout or self.OLLAMA_CONFIG["timeout"]
+        start_time = time.time()
+
+        try:
+            async with session.post(
+                url, json=payload, timeout=aiohttp.ClientTimeout(total=request_timeout)
+            ) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    raise RuntimeError(
+                        f"Ollama API error {response.status}: {error_text}"
+                    )
+
+                data = await response.json()
+                response_text = data.get("response", "")
+
+                # Estimate tokens (Ollama doesn't always return token counts)
+                # Rough estimate: 1 token ≈ 4 characters for English
+                estimated_prompt_tokens = len(full_prompt) // 4
+                estimated_completion_tokens = len(response_text) // 4
+
+                latency = time.time() - start_time
+
+                usage_info = {
+                    "model": model,
+                    "prompt_tokens": estimated_prompt_tokens,
+                    "completion_tokens": estimated_completion_tokens,
+                    "total_tokens": estimated_prompt_tokens
+                    + estimated_completion_tokens,
+                    "cost_usd": 0.0,  # Local LLM is free
+                    "time_seconds": latency,
+                }
+
+                return response_text, usage_info
+
+        except asyncio.TimeoutError:
+            raise RuntimeError(f"Ollama request timed out after {request_timeout}s")
+        except Exception as e:
+            raise RuntimeError(f"Ollama request failed: {e}")
+
+    async def _ollama_batch_complete(
+        self,
+        model: str,
+        prompts: List[str],
+        max_tokens: int,
+        temperature: float,
+        system: Optional[str] = None,
+        batch_size: Optional[int] = None,
+    ) -> List[Tuple[str, dict]]:
+        """
+        Process multiple prompts with Ollama using concurrent requests.
+
+        Ollama doesn't natively support batching, so we simulate it with
+        asyncio.gather() for concurrent processing.
+
+        Args:
+            model: Ollama model name
+            prompts: List of prompts to process
+            max_tokens: Maximum tokens per response
+            temperature: Sampling temperature
+            system: Optional system message
+            batch_size: Max concurrent requests (default: 8)
+
+        Returns:
+            List of (response_text, usage_info) tuples
+        """
+        batch_size = batch_size or self.OLLAMA_CONFIG["batch_size"]
+        results = []
+
+        # Process in chunks to avoid overwhelming Ollama
+        for i in range(0, len(prompts), batch_size):
+            chunk = prompts[i : i + batch_size]
+
+            # Create tasks for concurrent execution
+            tasks = [
+                self._ollama_complete(
+                    model=model,
+                    prompt=prompt,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    system=system,
+                )
+                for prompt in chunk
+            ]
+
+            # Execute concurrently
+            chunk_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Handle results and errors
+            for result in chunk_results:
+                if isinstance(result, Exception):
+                    logger.error(f"Ollama batch error: {result}")
+                    # Return empty response on error
+                    results.append(
+                        (
+                            "",
+                            {
+                                "model": model,
+                                "prompt_tokens": 0,
+                                "completion_tokens": 0,
+                                "total_tokens": 0,
+                                "cost_usd": 0.0,
+                                "time_seconds": 0.0,
+                                "error": str(result),
+                            },
+                        )
+                    )
+                else:
+                    results.append(result)
+
+        return results
+
+    async def close(self):
+        """Close aiohttp session for Ollama."""
+        if self._ollama_session and not self._ollama_session.closed:
+            await self._ollama_session.close()
+
     def _extract_usage(self, response, model: str, start_time: float) -> dict:
         """
         Extract token usage and calculate cost from API response.
@@ -212,7 +422,7 @@ class LLMClient:
             Dict with usage info: model, prompt_tokens, completion_tokens, total_tokens, cost_usd, time_seconds
         """
         # Get usage from response
-        if hasattr(response, 'usage'):
+        if hasattr(response, "usage"):
             usage = response.usage
             prompt_tokens = usage.prompt_tokens
             completion_tokens = usage.completion_tokens
@@ -305,7 +515,55 @@ class LLMClient:
         try:
             return json.loads(json_str)
         except json.JSONDecodeError as e:
-            raise ValueError(f"Failed to parse JSON from response: {e}\n\nResponse was:\n{text[:500]}")
+            raise ValueError(
+                f"Failed to parse JSON from response: {e}\n\nResponse was:\n{text[:500]}"
+            )
+
+    async def batch_complete(
+        self,
+        prompts: List[str],
+        max_tokens: Optional[int] = None,
+        temperature: Optional[float] = None,
+        batch_size: int = 8,
+    ) -> List[Tuple[str, dict]]:
+        """
+        Process multiple prompts in batches.
+
+        For Ollama, uses concurrent processing. For other providers,
+        processes sequentially (to respect rate limits).
+
+        Args:
+            prompts: List of prompts to process
+            max_tokens: Maximum tokens per response
+            temperature: Sampling temperature
+            batch_size: Number of concurrent requests (Ollama only)
+
+        Returns:
+            List of (response_text, usage_info) tuples
+        """
+        max_tokens = max_tokens or self.config.llm_max_tokens
+        temperature = temperature or self.config.llm_temperature
+
+        if self.config.llm_provider == "ollama":
+            # Use concurrent batch processing for Ollama
+            return await self._ollama_batch_complete(
+                model=self.config.model,
+                prompts=prompts,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                batch_size=batch_size,
+            )
+        else:
+            # Process sequentially for API-based providers
+            results = []
+            for prompt in prompts:
+                try:
+                    result = await self.complete(prompt, max_tokens, temperature)
+                    results.append(result)
+                except Exception as e:
+                    logger.error(f"Batch error: {e}")
+                    results.append(("", {"error": str(e), "time_seconds": 0}))
+            return results
 
     def estimate_cost(self, num_personas: int) -> dict:
         """
@@ -322,9 +580,12 @@ class LLMClient:
             "openrouter": 0.0,  # Qwen 2.5 7B is free tier
             "openai": 0.05,  # gpt-4o-mini
             "claude": 0.03,  # claude-3-5-haiku
+            "ollama": 0.0,  # Local LLM is free
         }
 
-        estimated_cost = cost_estimates.get(self.config.llm_provider, 0.05) * num_personas
+        estimated_cost = (
+            cost_estimates.get(self.config.llm_provider, 0.05) * num_personas
+        )
 
         return {
             "provider": self.config.llm_provider,
