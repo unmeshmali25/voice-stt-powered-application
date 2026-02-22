@@ -60,6 +60,15 @@ class AgentState(TypedDict, total=False):
     events_created: int
     errors: List[str]
 
+    # --- LLM Decision Configuration ---
+    use_llm_decisions: bool  # Whether to use LLM or probability-based decisions
+    llm_tier: Optional[str]  # 'standard' (OpenRouter) or 'fast' (Ollama)
+
+    # --- Historical Context for LLM Decisions ---
+    recent_orders: List[dict]  # Last 5 purchases for context
+    monthly_spend: float  # Current month spending
+    last_shop_date: Optional[date]  # Last shopping date
+
     # --- Database Session (injected at runtime) ---
     db: Any  # SQLAlchemy Session - not serializable, injected per-run
 
@@ -125,6 +134,13 @@ def create_initial_state(
         # Tracking
         events_created=0,
         errors=[],
+        # LLM Decision Configuration (defaults to probability-based)
+        use_llm_decisions=False,
+        llm_tier=None,
+        # Historical Context
+        recent_orders=[],
+        monthly_spend=0.0,
+        last_shop_date=None,
         # Database session
         db=db,
     )
