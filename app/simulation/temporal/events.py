@@ -1,6 +1,7 @@
 """Temporal event calendar for shopping simulation.
 
-Provides static seasonal and weekly patterns that influence shopping behavior.
+Provides static seasonal events that influence shopping behavior.
+Note: Weekly patterns removed as agents have individual day preferences (pref_day_* traits).
 """
 
 import datetime
@@ -30,19 +31,6 @@ class Event:
         return True
 
 
-@dataclass
-class WeeklyPattern:
-    """Represents a weekly shopping pattern."""
-
-    name: str
-    days: List[int]  # 0=Monday, 6=Sunday
-    impact: float  # -1.0 to 1.0
-
-    def is_active(self, date: datetime.date) -> bool:
-        """Check if pattern is active on given date."""
-        return date.weekday() in self.days
-
-
 class EventCalendar:
     """Calendar system for temporal shopping events and patterns.
 
@@ -58,6 +46,14 @@ class EventCalendar:
             impact=0.3,
             categories=["school", "office", "health"],
             description="School supplies, health checkups",
+        ),
+        "thanksgiving": Event(
+            name="thanksgiving",
+            months=[11],  # November
+            days=list(range(22, 29)),  # 4th Thursday of November (approximation)
+            impact=0.5,
+            categories=["food", "all"],
+            description="Thanksgiving holiday - food and travel prep",
         ),
         "black_friday": Event(
             name="black_friday",
@@ -145,25 +141,6 @@ class EventCalendar:
         ),
     }
 
-    # Weekly shopping patterns
-    WEEKLY_PATTERNS: Dict[str, WeeklyPattern] = {
-        "weekend_boost": WeeklyPattern(
-            name="weekend_boost",
-            days=[5, 6],  # Saturday (5), Sunday (6)
-            impact=0.15,
-        ),
-        "midweek_dip": WeeklyPattern(
-            name="midweek_dip",
-            days=[2],  # Wednesday
-            impact=-0.1,
-        ),
-        "friday_prep": WeeklyPattern(
-            name="friday_prep",
-            days=[4],  # Friday
-            impact=0.1,
-        ),
-    }
-
     def __init__(self):
         """Initialize the event calendar."""
         pass
@@ -179,25 +156,11 @@ class EventCalendar:
         """
         return [event for event in self.EVENTS.values() if event.is_active(date)]
 
-    def get_active_patterns(self, date: datetime.date) -> List[WeeklyPattern]:
-        """Get all active weekly patterns for a given date.
-
-        Args:
-            date: The date to check
-
-        Returns:
-            List of active WeeklyPattern objects
-        """
-        return [
-            pattern
-            for pattern in self.WEEKLY_PATTERNS.values()
-            if pattern.is_active(date)
-        ]
-
     def calculate_total_impact(self, date: datetime.date) -> float:
         """Calculate total shopping impact for a date.
 
-        Sums impacts from active events and weekly patterns.
+        Sums impacts from active seasonal events.
+        Note: Weekly patterns removed as agents have individual day preferences (pref_day_* traits).
 
         Args:
             date: The date to check
@@ -206,9 +169,8 @@ class EventCalendar:
             Total impact score (can be positive or negative)
         """
         events = self.get_active_events(date)
-        patterns = self.get_active_patterns(date)
 
-        total_impact = sum(e.impact for e in events) + sum(p.impact for p in patterns)
+        total_impact = sum(e.impact for e in events)
 
         # Clamp to reasonable range
         return max(-1.0, min(1.0, total_impact))
@@ -216,7 +178,7 @@ class EventCalendar:
     def get_context_for_date(self, date: datetime.date) -> Dict[str, Any]:
         """Get complete temporal context for a date.
 
-        Returns full context including active events, patterns, and impact scores.
+        Returns full context including active events and impact scores.
         This is used when making LLM-based decisions to provide temporal context.
 
         Args:
@@ -228,13 +190,11 @@ class EventCalendar:
                 - day_of_week: Day name (Monday-Sunday)
                 - month_name: Month name
                 - active_events: List of event names
-                - active_patterns: List of pattern names
                 - event_details: List of event objects (as dicts)
                 - total_impact: Combined impact score (-1.0 to 1.0)
                 - primary_categories: Union of all category influences
         """
         events = self.get_active_events(date)
-        patterns = self.get_active_patterns(date)
 
         # Collect all categories
         categories = set()
@@ -246,7 +206,6 @@ class EventCalendar:
             "day_of_week": date.strftime("%A"),
             "month_name": date.strftime("%B"),
             "active_events": [e.name for e in events],
-            "active_patterns": [p.name for p in patterns],
             "event_details": [
                 {
                     "name": e.name,
