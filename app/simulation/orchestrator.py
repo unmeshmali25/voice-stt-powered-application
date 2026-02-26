@@ -14,6 +14,7 @@ import asyncio
 import time
 import logging
 import os
+import random
 import sys
 import signal
 import traceback
@@ -37,6 +38,13 @@ from app.offer_engine import get_scheduler, get_config, reset_singletons
 from app.simulation.agent.state import AgentState, create_initial_state
 from app.simulation.agent.actions import set_actions, get_actions
 from app.simulation.agent.shopping_graph import get_shopping_graph
+from app.simulation.agent.llm_decisions import (
+    get_decision_engine,
+    reset_decision_engine,
+)
+from app.simulation.metrics.llm_metrics import get_metrics_collector
+from app.simulation.agent.decision_tracker import get_decision_tracker
+from app.simulation.config import SimulationConfig
 
 # Scaling components
 from app.simulation.rate_limiter import get_rate_limiter, get_rate_limiter_metrics
@@ -139,6 +147,10 @@ class SimulationOrchestrator:
         warmup_cycles: int = 0,
         parallel_mode: bool = True,
         db_url: Optional[str] = None,
+        # LLM parameters
+        llm_percentage: float = 0.4,
+        llm_tier_split: float = 0.5,
+        use_llm_graph: bool = True,
     ):
         """
         Initialize orchestrator.
@@ -155,6 +167,9 @@ class SimulationOrchestrator:
             warmup_cycles: Number of cycles to gradually ramp up agents (0 to disable)
             parallel_mode: Enable parallel agent execution (vs sequential)
             db_url: Database URL for parallel executor (uses env if None)
+            llm_percentage: Percentage of agents using LLM decisions (0.0 to 1.0)
+            llm_tier_split: Split between standard (OpenRouter) and fast (Ollama) tiers (0.0 to 1.0)
+            use_llm_graph: If True, use LLM-enabled graph with router nodes
         """
         self.db = db
         self.time_scale = time_scale
@@ -165,6 +180,36 @@ class SimulationOrchestrator:
         self.rate_limit_rps = rate_limit_rps
         self.checkpoint_interval = checkpoint_interval
         self.warmup_cycles = warmup_cycles
+
+        # Validate and store LLM parameters
+        if not 0.0 <= llm_percentage <= 1.0:
+            raise ValueError(
+                f"llm_percentage must be between 0.0 and 1.0, got {llm_percentage}"
+            )
+        if not 0.0 <= llm_tier_split <= 1.0:
+            raise ValueError(
+                f"llm_tier_split must be between 0.0 and 1.0, got {llm_tier_split}"
+            )
+
+        self.llm_percentage = llm_percentage
+        self.llm_tier_split = llm_tier_split
+        self.use_llm_graph = use_llm_graph
+
+        # Initialize LLM infrastructure if using LLM
+        self.llm_engine = None
+        self.metrics_collector = None
+        self.decision_tracker = None
+
+        if llm_percentage > 0:
+            logger.info(
+                f"Initializing LLM infrastructure: {llm_percentage * 100:.0f}% agents, tier_split={llm_tier_split}"
+            )
+            self.metrics_collector = get_metrics_collector()
+            self.decision_tracker = get_decision_tracker()
+            self.llm_engine = get_decision_engine(SimulationConfig())
+            # Reset to ensure fresh instance
+            reset_decision_engine()
+            self.llm_engine = get_decision_engine(SimulationConfig())
 
         # Store db_url for parallel executor
         self._db_url = db_url or os.getenv("DATABASE_URL", "")
@@ -197,8 +242,8 @@ class SimulationOrchestrator:
         # Initialize actions (for sequential mode)
         set_actions(db)
 
-        # Get shopping graph
-        self.shopping_graph = get_shopping_graph()
+        # Get shopping graph (with LLM support if enabled)
+        self.shopping_graph = get_shopping_graph(use_llm=self.use_llm_graph)
 
         # Stats
         self.stats = SimulationStats()
@@ -836,6 +881,49 @@ class SimulationOrchestrator:
             missing = set(agent_ids) - set(loaded_ids)
             logger.warning(f"Some agents not found or inactive: {missing}")
 
+        # Assign LLM decisions to agents based on percentage
+        if self.llm_percentage > 0:
+            agents = self._assign_llm_agents(agents)
+            # Log assignment summary
+            llm_count = sum(1 for a in agents if a.get("use_llm_decisions", False))
+            logger.info(
+                f"LLM assignment: {llm_count}/{len(agents)} agents ({self.llm_percentage * 100:.0f}%)"
+            )
+
+        return agents
+
+    def _assign_llm_agents(self, agents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Randomly assign agents to LLM based on percentage and tier split.
+
+        Args:
+            agents: List of agent dictionaries
+
+        Returns:
+            Agents with use_llm_decisions and llm_tier fields set
+        """
+        if not agents or self.llm_percentage == 0:
+            # Set all to False if no LLM
+            for agent in agents:
+                agent["use_llm_decisions"] = False
+            return agents
+
+        num_agents = len(agents)
+        num_llm = int(num_agents * self.llm_percentage)
+
+        # Randomly select which agents get LLM
+        llm_indices = set(random.sample(range(num_agents), min(num_llm, num_agents)))
+
+        for i, agent in enumerate(agents):
+            use_llm = i in llm_indices
+            agent["use_llm_decisions"] = use_llm
+
+            if use_llm:
+                # Assign tier based on split
+                # llm_tier_split is percentage for "standard" tier (OpenRouter)
+                # Rest goes to "fast" tier (Ollama)
+                is_standard = random.random() < self.llm_tier_split
+                agent["llm_tier"] = "standard" if is_standard else "fast"
+
         return agents
 
     def _get_default_store(self) -> str:
@@ -1056,6 +1144,9 @@ async def run_simulation(
     parallel_mode: bool = True,
     resume: bool = False,
     resume_from: Optional[str] = None,
+    # LLM parameters
+    llm_percentage: float = 0.4,
+    llm_tier_split: float = 0.5,
 ) -> SimulationStats:
     """
     Convenience function to run simulation.
@@ -1076,6 +1167,8 @@ async def run_simulation(
         parallel_mode: Enable parallel agent execution
         resume: Resume from latest checkpoint
         resume_from: Resume from specific checkpoint file
+        llm_percentage: Percentage of agents using LLM decisions (0.0 to 1.0)
+        llm_tier_split: Split between standard (OpenRouter) and fast (Ollama) tiers (0.0 to 1.0)
 
     Returns:
         Final SimulationStats
@@ -1132,6 +1225,8 @@ async def run_simulation(
             warmup_cycles=warmup_cycles,
             parallel_mode=parallel_mode,
             db_url=db_url,
+            llm_percentage=llm_percentage,
+            llm_tier_split=llm_tier_split,
         )
 
         # Handle resume
@@ -1198,6 +1293,15 @@ Examples:
 
   # Run with warmup (gradually increase agents)
   python -m app.simulation.orchestrator --hours 6 --warmup-cycles 10
+
+  # Run with LLM-based decisions (40% of agents)
+  python -m app.simulation.orchestrator --hours 6 --llm-percentage 0.4
+
+  # Run all agents with LLM (100%)
+  python -m app.simulation.orchestrator --hours 6 --llm-percentage 1.0
+
+        # Run with custom tier split (80% OpenRouter, 20% Ollama)
+  python -m app.simulation.orchestrator --hours 6 --llm-tier-split 0.8
         """,
     )
     parser.add_argument(
@@ -1283,6 +1387,19 @@ Examples:
         action="store_true",
         help="Start fresh, ignore any checkpoints",
     )
+    # LLM arguments
+    parser.add_argument(
+        "--llm-percentage",
+        type=float,
+        default=0.4,
+        help="Percentage of agents using LLM decisions (0.0 to 1.0, default: 0.4 = 40%%)",
+    )
+    parser.add_argument(
+        "--llm-tier-split",
+        type=float,
+        default=0.5,
+        help="Split between standard (OpenRouter) and fast (Ollama) tiers (0.0 to 1.0, default: 0.5 = 50/50)",
+    )
 
     args = parser.parse_args()
 
@@ -1304,5 +1421,7 @@ Examples:
             parallel_mode=not args.sequential,
             resume=args.resume,
             resume_from=args.resume_from,
+            llm_percentage=args.llm_percentage,
+            llm_tier_split=args.llm_tier_split,
         )
     )
