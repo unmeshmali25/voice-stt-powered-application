@@ -2,25 +2,45 @@
 LangGraph StateGraph for shopping agent simulation.
 
 This module defines the shopping workflow as a graph:
-1. decide_shop - Should agent shop today?
+1. decide_shop - Should agent shop today? (LLM or probability)
 2. browse_products - View products based on preferences
 3. add_to_cart - Add items based on impulsivity
 4. view_coupons - Check available coupons
-5. decide_checkout - Complete or abandon?
+5. decide_checkout - Complete or abandon? (LLM or probability)
 6. complete_checkout / abandon_session - Final actions
+
+LLM Integration:
+- Agents can use LLM or probability-based decisions based on use_llm_decisions flag
+- LLM tier (fast/standard) determines which provider to use
+- Cache integration for performance
+- Fallback to probability on LLM failure
 """
 
 import random
 import logging
-from typing import Literal
+import asyncio
+from typing import Literal, Optional
 
 from langgraph.graph import StateGraph, END
 from langsmith import traceable
 
 from .state import AgentState
 from .actions import get_actions
+from .llm_decisions import LLMDecisionEngine, get_decision_engine
+from app.simulation.config import SimulationConfig
 
 logger = logging.getLogger(__name__)
+
+# Global config for LLM engine initialization
+_simulation_config: Optional[SimulationConfig] = None
+
+
+def _get_simulation_config() -> SimulationConfig:
+    """Get or create simulation config for LLM engine."""
+    global _simulation_config
+    if _simulation_config is None:
+        _simulation_config = SimulationConfig()
+    return _simulation_config
 
 
 # =============================================================================
@@ -87,6 +107,61 @@ def decide_shop_node(state: AgentState) -> dict:
     )
 
     return {"should_shop": should_shop}
+
+
+@traceable(name="decide_shop_router")
+async def decide_shop_router(state: AgentState) -> dict:
+    """
+    Router node that decides whether to use LLM or probability for shop decision.
+
+    Checks state["use_llm_decisions"] flag:
+    - If True: Use LLM decision engine
+    - If False: Use probability-based logic
+
+    Always includes decision_source in state for tracking.
+    """
+    agent_id = state.get("agent_id", "unknown")
+    use_llm = state.get("use_llm_decisions", False)
+
+    if use_llm:
+        try:
+            # Get LLM engine and make decision
+            llm_tier = (
+                state.get("llm_tier") or "fast"
+            )  # fast (Ollama) or standard (OpenRouter)
+            engine = get_decision_engine(_get_simulation_config())
+
+            result = await engine.decide_shop(state, tier=llm_tier)
+
+            logger.debug(
+                f"Agent {agent_id}: LLM shop decision = {result.decision} "
+                f"(confidence={result.confidence:.2f}, provider={result.llm_provider}, "
+                f"latency={result.latency_ms}ms, cache_hit={result.cache_hit})"
+            )
+
+            return {
+                "should_shop": result.decision,
+                "decision_source": "cache" if result.cache_hit else "llm",
+                "decision_confidence": result.confidence,
+                "decision_reasoning": result.reasoning,
+                "llm_provider": result.llm_provider,
+                "llm_response_time_ms": result.latency_ms,
+            }
+
+        except Exception as e:
+            logger.warning(
+                f"Agent {agent_id}: LLM shop decision failed, falling back to probability: {e}"
+            )
+            # Fallback to probability
+            prob_result = decide_shop_node(state)
+            prob_result["decision_source"] = "probability_fallback"
+            prob_result["llm_fallback_reason"] = str(e)
+            return prob_result
+    else:
+        # Use probability-based decision
+        result = decide_shop_node(state)
+        result["decision_source"] = "probability"
+        return result
 
 
 @traceable(name="browse_products")
@@ -336,6 +411,62 @@ def decide_checkout_node(state: AgentState) -> dict:
     return {"checkout_decision": decision}
 
 
+@traceable(name="decide_checkout_router")
+async def decide_checkout_router(state: AgentState) -> dict:
+    """
+    Router node that decides whether to use LLM or probability for checkout decision.
+
+    Checks state["use_llm_decisions"] flag:
+    - If True: Use LLM decision engine
+    - If False: Use probability-based logic
+
+    Always includes decision_source in state for tracking.
+    """
+    agent_id = state.get("agent_id", "unknown")
+    use_llm = state.get("use_llm_decisions", False)
+
+    if use_llm:
+        try:
+            # Get LLM engine and make decision
+            llm_tier = state.get("llm_tier") or "fast"
+            engine = get_decision_engine(_get_simulation_config())
+
+            result = await engine.decide_checkout(state, tier=llm_tier)
+
+            # LLM returns boolean, convert to string decision
+            decision_str = "complete" if result.decision else "abandon"
+
+            logger.debug(
+                f"Agent {agent_id}: LLM checkout decision = {decision_str} "
+                f"(confidence={result.confidence:.2f}, provider={result.llm_provider}, "
+                f"latency={result.latency_ms}ms, cache_hit={result.cache_hit})"
+            )
+
+            return {
+                "checkout_decision": decision_str,
+                "decision_source": "cache" if result.cache_hit else "llm",
+                "decision_confidence": result.confidence,
+                "decision_reasoning": result.reasoning,
+                "llm_provider": result.llm_provider,
+                "llm_response_time_ms": result.latency_ms,
+            }
+
+        except Exception as e:
+            logger.warning(
+                f"Agent {agent_id}: LLM checkout decision failed, falling back to probability: {e}"
+            )
+            # Fallback to probability
+            prob_result = decide_checkout_node(state)
+            prob_result["decision_source"] = "probability_fallback"
+            prob_result["llm_fallback_reason"] = str(e)
+            return prob_result
+    else:
+        # Use probability-based decision
+        result = decide_checkout_node(state)
+        result["decision_source"] = "probability"
+        return result
+
+
 @traceable(name="complete_checkout")
 def complete_checkout_node(state: AgentState) -> dict:
     """
@@ -403,7 +534,7 @@ def checkout_router(state: AgentState) -> Literal["complete", "abandon"]:
 # =============================================================================
 
 
-def build_shopping_graph() -> StateGraph:
+def build_shopping_graph(use_llm: bool = False) -> StateGraph:
     """
     Build the shopping workflow StateGraph.
 
@@ -418,18 +549,28 @@ def build_shopping_graph() -> StateGraph:
                         (abandon) -> [abandon_session] -> [END]
     ```
 
+    Args:
+        use_llm: If True, use LLM decision routers (decide_shop_router, decide_checkout_router)
+                If False, use original probability-based nodes (backward compatible)
+
     Returns:
         Compiled StateGraph ready for execution
     """
     # Create graph with AgentState schema
     workflow = StateGraph(AgentState)
 
+    # Choose decision nodes based on use_llm flag
+    # Note: The actual LLM vs probability routing happens at runtime based on agent state
+    # This parameter is mainly for backward compatibility and testing
+    shop_node = decide_shop_router if use_llm else decide_shop_node
+    checkout_node = decide_checkout_router if use_llm else decide_checkout_node
+
     # Add nodes
-    workflow.add_node("decide_shop", decide_shop_node)
+    workflow.add_node("decide_shop", shop_node)
     workflow.add_node("browse_products", browse_products_node)
     workflow.add_node("add_to_cart", add_to_cart_node)
     workflow.add_node("view_coupons", view_coupons_node)
-    workflow.add_node("decide_checkout", decide_checkout_node)
+    workflow.add_node("decide_checkout", checkout_node)
     workflow.add_node("complete_checkout", complete_checkout_node)
     workflow.add_node("abandon_session", abandon_session_node)
 
@@ -459,14 +600,17 @@ def build_shopping_graph() -> StateGraph:
 _compiled_graph = None
 
 
-def get_shopping_graph() -> StateGraph:
+def get_shopping_graph(use_llm: bool = False) -> StateGraph:
     """
     Get the compiled shopping graph (singleton).
+
+    Args:
+        use_llm: If True, use LLM decision routers; if False, use probability-based nodes
 
     Returns:
         Compiled StateGraph
     """
     global _compiled_graph
     if _compiled_graph is None:
-        _compiled_graph = build_shopping_graph()
+        _compiled_graph = build_shopping_graph(use_llm=use_llm)
     return _compiled_graph
