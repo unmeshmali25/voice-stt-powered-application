@@ -245,8 +245,30 @@ class LLMClient:
 
     def _get_ollama_session(self) -> aiohttp.ClientSession:
         """Get or create aiohttp session for Ollama."""
-        if self._ollama_session is None or self._ollama_session.closed:
+        # Check if session exists and is usable (bound to current event loop)
+        if self._ollama_session is not None:
+            try:
+                # Check if session is closed
+                if self._ollama_session.closed:
+                    self._ollama_session = None
+                else:
+                    # Check if session is bound to current event loop
+                    # by accessing internal _loop attribute
+                    current_loop = asyncio.get_running_loop()
+                    if (
+                        hasattr(self._ollama_session, "_loop")
+                        and self._ollama_session._loop != current_loop
+                    ):
+                        # Session bound to different event loop, need to recreate
+                        logger.debug("Recreating Ollama session for new event loop")
+                        self._ollama_session = None
+            except RuntimeError:
+                # No running event loop, can't use this session
+                self._ollama_session = None
+
+        if self._ollama_session is None:
             self._ollama_session = aiohttp.ClientSession()
+
         return self._ollama_session
 
     async def _ollama_complete(

@@ -215,9 +215,10 @@ class SimulationOrchestrator:
             # Reset to ensure fresh instance
             reset_decision_engine()
             self.llm_engine = get_decision_engine(SimulationConfig())
-            # Start decision tracker for auto-flush
-            if self.decision_tracker:
-                asyncio.create_task(self.decision_tracker.start())
+            # Note: decision_tracker.start() will be called in run() method
+            # which is async, avoiding "Timeout context manager should be used inside
+            # a task" error
+            self._decision_tracker_started = False
 
         # Store db_url for parallel executor
         self._db_url = db_url or os.getenv("DATABASE_URL", "")
@@ -467,6 +468,18 @@ class SimulationOrchestrator:
         is_valid, error_msg = self._validate_agent_availability(num_agents)
         if not is_valid:
             logger.error(error_msg)
+            print(error_msg)  # Print to user console
+            return self.stats
+
+        # Start decision tracker for auto-flush (must be called from async context)
+        if self.decision_tracker and not self._decision_tracker_started:
+            await self.decision_tracker.start()
+            self._decision_tracker_started = True
+
+        # Start decision tracker for auto-flush (must be called from async context)
+        if self.decision_tracker and not self._decision_tracker_started:
+            await self.decision_tracker.start()
+            self._decision_tracker_started = True
             print(error_msg)  # Print to user console
             return self.stats
 

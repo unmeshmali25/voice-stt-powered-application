@@ -153,6 +153,9 @@ class DecisionTracker:
         # Queue for batching
         self._queue: List[DecisionRecord] = []
         self._queue_lock: Optional[asyncio.Lock] = None
+        self._lock_loop: Optional[asyncio.AbstractEventLoop] = (
+            None  # Track which loop the lock belongs to
+        )
 
         # Statistics
         self._stats = {
@@ -185,6 +188,7 @@ class DecisionTracker:
         """Start the auto-flush background task."""
         # Initialize lock in the correct event loop context
         self._queue_lock = asyncio.Lock()
+        self._lock_loop = asyncio.get_running_loop()
         self._running = True
         self._flush_task = asyncio.create_task(self._auto_flush())
         logger.info("Decision tracker started")
@@ -218,17 +222,18 @@ class DecisionTracker:
     @traceable(run_type="llm")
     def _ensure_lock(self) -> None:
         """Ensure the queue lock is initialized in the current event loop."""
-        if self._queue_lock is None:
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No event loop running, create one
+            current_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(current_loop)
+
+        # Check if lock exists and belongs to current loop
+        if self._queue_lock is None or self._lock_loop is not current_loop:
             self._queue_lock = asyncio.Lock()
-        else:
-            # Check if lock is bound to a different event loop (happens on Ctrl+C)
-            try:
-                # Try to get the lock's loop - will raise if wrong loop
-                self._queue_lock._get_loop()
-            except RuntimeError:
-                # Lock is bound to a different event loop, recreate it
-                logger.debug("Recreating queue lock for new event loop")
-                self._queue_lock = asyncio.Lock()
+            self._lock_loop = current_loop
+            logger.debug(f"Created queue lock for event loop {id(current_loop)}")
 
     async def log_decision(
         self,
