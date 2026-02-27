@@ -1,0 +1,46 @@
+{
+  "metadata": {
+    "simulation_id": "2026-02-27_run_002",
+    "generated_at": "2026-02-27T23:42:41.119437",
+    "report_duration_seconds": 0.0001232624053955078
+  },
+  "cache_statistics": {
+    "total_cache_hits": 4903,
+    "total_cache_misses": 606,
+    "cache_hit_rate": 0.8899981847885279,
+    "cache_hit_rate_percent": "89.0%"
+  },
+  "savings_summary": {
+    "total_calls_saved": 4903,
+    "total_time_saved_ms": 32740736.17629632,
+    "total_time_saved_formatted": "9.09 hours (32740736ms)",
+    "total_cost_saved": 27.8698,
+    "total_cost_saved_formatted": "$27.8698",
+    "estimated_tokens_saved": 2941200,
+    "avg_latency_ms": 7949.267716535443
+  },
+  "provider_breakdown": [
+    {
+      "provider": "ollama",
+      "calls_saved": 218,
+      "time_saved_ms": 3029796.296296297,
+      "time_saved_seconds": 3029.796296296297,
+      "time_saved_formatted": "50.5 minutes",
+      "input_tokens_saved": 109000,
+      "output_tokens_saved": 21800,
+      "cost_saved": 0.0,
+      "cost_saved_formatted": "$0.0000"
+    },
+    {
+      "provider": "openrouter",
+      "calls_saved": 4684,
+      "time_saved_ms": 29710939.88000002,
+      "time_saved_seconds": 29710.93988000002,
+      "time_saved_formatted": "8.25 hours",
+      "input_tokens_saved": 2342000,
+      "output_tokens_saved": 468400,
+      "cost_saved": 27.8698,
+      "cost_saved_formatted": "$27.8698"
+    }
+  ]
+}
