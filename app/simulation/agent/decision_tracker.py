@@ -220,6 +220,15 @@ class DecisionTracker:
         """Ensure the queue lock is initialized in the current event loop."""
         if self._queue_lock is None:
             self._queue_lock = asyncio.Lock()
+        else:
+            # Check if lock is bound to a different event loop (happens on Ctrl+C)
+            try:
+                # Try to get the lock's loop - will raise if wrong loop
+                self._queue_lock._get_loop()
+            except RuntimeError:
+                # Lock is bound to a different event loop, recreate it
+                logger.debug("Recreating queue lock for new event loop")
+                self._queue_lock = asyncio.Lock()
 
     async def log_decision(
         self,
