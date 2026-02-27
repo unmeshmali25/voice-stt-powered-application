@@ -129,7 +129,7 @@ class LLMDecisionEngine:
         agent_id = state.get("agent_id", "unknown")
 
         # Check cache first
-        cached_result = self.cache.get(agent_id, decision_type, context)
+        cached_result = await self.cache.get(agent_id, decision_type, context)
         if cached_result is not None:
             await self.metrics.record_cache_hit()
             await self.tracker.log_cache_hit(agent_id, decision_type, "")
@@ -182,7 +182,15 @@ class LLMDecisionEngine:
             parsed = self._parse_response(response_text)
 
             # Store in cache
-            self.cache.set(agent_id, decision_type, context, parsed)
+            await self.cache.set(
+                agent_id,
+                decision_type,
+                context,
+                bool(parsed.get("decision", False)),
+                confidence=parsed.get("confidence"),
+                reasoning=parsed.get("reasoning"),
+                urgency=parsed.get("urgency"),
+            )
 
             # Track metrics
             await self.metrics.end_call(provider, latency_ms / 1000, success=True)
@@ -252,7 +260,7 @@ class LLMDecisionEngine:
         agent_id = state.get("agent_id", "unknown")
 
         # Check cache
-        cached_result = self.cache.get(agent_id, decision_type, context)
+        cached_result = await self.cache.get(agent_id, decision_type, context)
         if cached_result is not None:
             await self.metrics.record_cache_hit()
             await self.tracker.log_cache_hit(agent_id, decision_type, "")
@@ -307,7 +315,15 @@ class LLMDecisionEngine:
             parsed = self._parse_response(response_text)
 
             # Store in cache
-            self.cache.set(agent_id, decision_type, context, parsed)
+            await self.cache.set(
+                agent_id,
+                decision_type,
+                context,
+                bool(parsed.get("decision", False)),
+                confidence=parsed.get("confidence"),
+                reasoning=parsed.get("reasoning"),
+                urgency=parsed.get("urgency"),
+            )
 
             # Track metrics
             await self.metrics.end_call(provider, latency_ms / 1000, success=True)
@@ -370,8 +386,8 @@ class LLMDecisionEngine:
         # Get active events
         active_events = []
         if current_date:
-            events = self.event_calendar.get_context_for_date(current_date)
-            active_events = [e.name for e in events]
+            temporal_context = self.event_calendar.get_context_for_date(current_date)
+            active_events = temporal_context.get("active_events", [])
 
         # Get recent orders summary
         recent_orders = state.get("recent_orders", [])

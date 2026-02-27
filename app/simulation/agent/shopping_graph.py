@@ -19,6 +19,7 @@ LLM Integration:
 import random
 import logging
 import asyncio
+import concurrent.futures
 from typing import Literal, Optional
 
 from langgraph.graph import StateGraph, END
@@ -109,10 +110,10 @@ def decide_shop_node(state: AgentState) -> dict:
     return {"should_shop": should_shop}
 
 
-@traceable(name="decide_shop_router")
-async def decide_shop_router(state: AgentState) -> dict:
+@traceable(name="decide_shop_router_async")
+async def decide_shop_router_async(state: AgentState) -> dict:
     """
-    Router node that decides whether to use LLM or probability for shop decision.
+    Async router node that decides whether to use LLM or probability for shop decision.
 
     Checks state["use_llm_decisions"] flag:
     - If True: Use LLM decision engine
@@ -162,6 +163,26 @@ async def decide_shop_router(state: AgentState) -> dict:
         result = decide_shop_node(state)
         result["decision_source"] = "probability"
         return result
+
+
+@traceable(name="decide_shop_router")
+def decide_shop_router(state: AgentState) -> dict:
+    """
+    Synchronous wrapper for decide_shop_router_async.
+
+    Runs the async router in a new event loop for sync graph execution.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+        # If we're already in an event loop, create a new one in a thread
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(asyncio.run, decide_shop_router_async(state))
+            return future.result()
+    except RuntimeError:
+        # No event loop running, we can use asyncio.run directly
+        return asyncio.run(decide_shop_router_async(state))
 
 
 @traceable(name="browse_products")
@@ -411,10 +432,10 @@ def decide_checkout_node(state: AgentState) -> dict:
     return {"checkout_decision": decision}
 
 
-@traceable(name="decide_checkout_router")
-async def decide_checkout_router(state: AgentState) -> dict:
+@traceable(name="decide_checkout_router_async")
+async def decide_checkout_router_async(state: AgentState) -> dict:
     """
-    Router node that decides whether to use LLM or probability for checkout decision.
+    Async router node that decides whether to use LLM or probability for checkout decision.
 
     Checks state["use_llm_decisions"] flag:
     - If True: Use LLM decision engine
@@ -465,6 +486,26 @@ async def decide_checkout_router(state: AgentState) -> dict:
         result = decide_checkout_node(state)
         result["decision_source"] = "probability"
         return result
+
+
+@traceable(name="decide_checkout_router")
+def decide_checkout_router(state: AgentState) -> dict:
+    """
+    Synchronous wrapper for decide_checkout_router_async.
+
+    Runs the async router in a new event loop for sync graph execution.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+        # If we're already in an event loop, create a new one in a thread
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(asyncio.run, decide_checkout_router_async(state))
+            return future.result()
+    except RuntimeError:
+        # No event loop running, we can use asyncio.run directly
+        return asyncio.run(decide_checkout_router_async(state))
 
 
 @traceable(name="complete_checkout")

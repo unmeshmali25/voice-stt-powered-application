@@ -7,26 +7,27 @@ Each prompt includes few-shot examples for different shopping personas.
 
 # JSON output schema for shopping decisions
 SHOP_DECISION_SCHEMA = """
-{
+{{
   "decision": true/false,
   "confidence": 0.0-1.0,
   "reasoning": "brief explanation",
   "urgency": 0.0-1.0
-}
+}}
 """
 
 # JSON output schema for checkout decisions
 CHECKOUT_DECISION_SCHEMA = """
-{
+{{
   "decision": true/false,
   "confidence": 0.0-1.0,
   "reasoning": "brief explanation",
   "urgency": 0.0-1.0
-}
+}}
 """
 
 # Shop decision prompt template
-SHOP_DECISION_PROMPT = """You are a shopping behavior simulator. Decide if this agent should shop today based on their profile and context.
+SHOP_DECISION_PROMPT = (
+    """You are a shopping behavior simulator. Decide if this agent should shop today based on their profile and context.
 
 AGENT PROFILE:
 - Shopping Frequency: {shopping_frequency}
@@ -82,29 +83,13 @@ Decision: {{
 }}
 
 YOUR DECISION (respond ONLY with JSON):
-{json_schema}
-""".format(
-    persona_name="{persona_name}",
-    shopping_frequency="{shopping_frequency}",
-    impulsivity="{impulsivity}",
-    price_sensitivity="{price_sensitivity}",
-    budget_sensitivity="{budget_sensitivity}",
-    coupon_affinity="{coupon_affinity}",
-    preferred_categories="{preferred_categories}",
-    pref_days="{pref_days}",
-    weekly_budget="{weekly_budget}",
-    avg_cart_value="{avg_cart_value}",
-    current_date="{current_date}",
-    current_day_of_week="{current_day_of_week}",
-    active_events="{active_events}",
-    days_since_last_shop="{days_since_last_shop}",
-    recent_orders="{recent_orders}",
-    monthly_spend="{monthly_spend}",
-    json_schema=SHOP_DECISION_SCHEMA,
+"""
+    + SHOP_DECISION_SCHEMA
 )
 
 # Checkout decision prompt template
-CHECKOUT_DECISION_PROMPT = """You are a shopping behavior simulator. Decide if this agent should complete their purchase or abandon the cart.
+CHECKOUT_DECISION_PROMPT = (
+    """You are a shopping behavior simulator. Decide if this agent should complete their purchase or abandon the cart.
 
 AGENT PROFILE:
 - Impulsivity: {impulsivity}/1.0
@@ -157,21 +142,8 @@ Decision: {{
 }}
 
 YOUR DECISION (respond ONLY with JSON):
-{json_schema}
-""".format(
-    persona_name="{persona_name}",
-    impulsivity="{impulsivity}",
-    price_sensitivity="{price_sensitivity}",
-    budget_sensitivity="{budget_sensitivity}",
-    brand_loyalty="{brand_loyalty}",
-    cart_items="{cart_items}",
-    cart_total="{cart_total}",
-    items_viewed="{items_viewed}",
-    coupons_available="{coupons_available}",
-    weekly_budget="{weekly_budget}",
-    monthly_spend="{monthly_spend}",
-    budget_status="{budget_status}",
-    json_schema=CHECKOUT_DECISION_SCHEMA,
+"""
+    + CHECKOUT_DECISION_SCHEMA
 )
 
 # Template for few-shot examples by persona type

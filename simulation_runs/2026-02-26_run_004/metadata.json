@@ -1,0 +1,31 @@
+{
+  "run_id": "2026-02-26_run_004",
+  "created_at": "2026-02-26T21:07:01.432663",
+  "simulation_config": {
+    "time_scale": 144.0,
+    "default_store_id": "ebb4d8a1-4695-46f0-844b-7f41ed13bd59",
+    "process_all_agents": false,
+    "rate_limit_rps": 50,
+    "checkpoint_interval": 10,
+    "mode": "parallel"
+  },
+  "final_statistics": {
+    "elapsed_hours": 0.4,
+    "simulated_datetime": "2023-01-07 08:45:05.869584",
+    "cycles_completed": 56,
+    "agents_processed": 20776,
+    "agents_shopped": 186,
+    "sessions_created": 186,
+    "checkouts_completed": 109,
+    "checkouts_abandoned": 77,
+    "offers_assigned": 0,
+    "events_created": 1231,
+    "errors": 0
+  },
+  "performance": {
+    "latency_p50_ms": 0,
+    "latency_p95_ms": 0,
+    "requests_total": 20776,
+    "circuit_breaker_state": "open"
+  }
+}
