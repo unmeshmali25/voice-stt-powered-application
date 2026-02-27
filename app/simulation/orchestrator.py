@@ -364,6 +364,10 @@ class SimulationOrchestrator:
         self._stop_requested = True
         logger.info("Stop requested, aborting current operation...")
 
+        # Also stop the parallel executor to cancel pending tasks
+        if hasattr(self, "parallel_executor") and self.parallel_executor:
+            self.parallel_executor.stop()
+
     def _clear_error_log(self):
         """Clear or create error log file with header."""
         with open(self._error_log_path, "w") as f:
@@ -1316,12 +1320,12 @@ async def run_simulation(
             start_date=parsed_start_date,
         )
     finally:
-        # Cleanup parallel executor if used
+        # Cleanup parallel executor if used (fast shutdown - don't wait for pending tasks)
         if (
             hasattr(orchestrator, "parallel_executor")
             and orchestrator.parallel_executor
         ):
-            orchestrator.parallel_executor.shutdown()
+            orchestrator.parallel_executor.shutdown(wait=False)
         db.close()
 
 

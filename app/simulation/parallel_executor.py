@@ -130,6 +130,10 @@ class ParallelAgentExecutor:
         # Pre-compiled graph (shared, stateless)
         self.shopping_graph = get_shopping_graph(use_llm=use_llm)
 
+        # Stop flag for graceful cancellation
+        self._stop_requested = False
+        self._current_tasks: List[asyncio.Task] = []
+
         logger.info(
             f"ParallelAgentExecutor initialized: "
             f"pool_size={pool_size}, max_overflow={max_overflow}, "
@@ -175,11 +179,51 @@ class ParallelAgentExecutor:
         if self.circuit_breaker:
             self.circuit_breaker.reset_cycle()
 
-        # Create coroutines for all agents
-        tasks = [self._execute_agent(agent, sim_date, store_id) for agent in agents]
+        # Check if stop was requested before starting
+        if self._stop_requested:
+            logger.info("Stop requested before cycle start, returning empty result")
+            return CycleResult(
+                cycle_number=cycle_number,
+                agents_processed=0,
+                agents_shopped=0,
+                checkouts_completed=0,
+                checkouts_abandoned=0,
+                events_created=0,
+                errors=0,
+                duration_seconds=0.0,
+            )
 
-        # Run all agents concurrently, collect results (including exceptions)
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        # Create tasks for all agents
+        tasks = [
+            asyncio.create_task(self._execute_agent(agent, sim_date, store_id))
+            for agent in agents
+        ]
+        self._current_tasks = tasks
+
+        try:
+            # Run all agents concurrently, collect results (including exceptions)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+        except asyncio.CancelledError:
+            # Handle cancellation gracefully
+            logger.info(f"Cycle {cycle_number} cancelled due to stop request")
+            # Cancel any pending tasks
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            # Wait briefly for cancellations to complete
+            await asyncio.gather(*tasks, return_exceptions=True)
+            return CycleResult(
+                cycle_number=cycle_number,
+                agents_processed=0,
+                agents_shopped=0,
+                checkouts_completed=0,
+                checkouts_abandoned=0,
+                events_created=0,
+                errors=0,
+                duration_seconds=time.time() - start_time,
+            )
+        finally:
+            self._current_tasks = []
 
         # Process results
         agent_results = []
@@ -380,10 +424,37 @@ class ParallelAgentExecutor:
             # Clear thread-local actions (optional cleanup)
             clear_actions()
 
-    def shutdown(self) -> None:
-        """Clean up resources."""
-        logger.info("Shutting down ParallelAgentExecutor...")
-        self.thread_pool.shutdown(wait=True)
+    def stop(self) -> None:
+        """Request immediate stop of ongoing cycle execution."""
+        logger.info("Stop requested for ParallelAgentExecutor...")
+        self._stop_requested = True
+
+        # Cancel any in-flight asyncio tasks
+        if self._current_tasks:
+            cancelled = 0
+            for task in self._current_tasks:
+                if not task.done():
+                    task.cancel()
+                    cancelled += 1
+            if cancelled > 0:
+                logger.info(f"Cancelled {cancelled} pending agent tasks")
+
+    def shutdown(self, wait: bool = False) -> None:
+        """
+        Clean up resources.
+
+        Args:
+            wait: If True, wait for pending tasks to complete (slow shutdown).
+                 If False, cancel tasks immediately (fast shutdown).
+        """
+        logger.info(f"Shutting down ParallelAgentExecutor (wait={wait})...")
+
+        # Always try to cancel first for faster shutdown
+        if not wait and self._current_tasks:
+            self.stop()
+
+        # Shutdown thread pool
+        self.thread_pool.shutdown(wait=wait)
         self.engine.dispose()
         logger.info("ParallelAgentExecutor shutdown complete")
 
