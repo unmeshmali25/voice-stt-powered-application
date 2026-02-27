@@ -6,6 +6,7 @@ Uses hybrid async model:
 - ThreadPoolExecutor for synchronous LangGraph calls
 - Per-agent database sessions from connection pool
 """
+
 import asyncio
 import logging
 import os
@@ -31,6 +32,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class AgentResult:
     """Result from single agent execution."""
+
     agent_id: str
     success: bool
     should_shop: bool = False
@@ -43,6 +45,7 @@ class AgentResult:
 @dataclass
 class CycleResult:
     """Result from executing all agents in a cycle."""
+
     cycle_number: int
     agents_processed: int
     agents_shopped: int
@@ -88,6 +91,7 @@ class ParallelAgentExecutor:
         max_workers: int = 12,
         pool_size: int = 50,
         max_overflow: int = 75,
+        use_llm: bool = False,
     ):
         """
         Initialize parallel executor.
@@ -100,6 +104,7 @@ class ParallelAgentExecutor:
             max_workers: Thread pool size for LangGraph execution
             pool_size: Base database connection pool size
             max_overflow: Max additional connections under load
+            use_llm: If True, use LLM decision routers; if False, use probability-based
         """
         self.db_url = db_url
         self.rate_limiter = rate_limiter
@@ -123,7 +128,7 @@ class ParallelAgentExecutor:
         self.thread_pool = ThreadPoolExecutor(max_workers=max_workers)
 
         # Pre-compiled graph (shared, stateless)
-        self.shopping_graph = get_shopping_graph()
+        self.shopping_graph = get_shopping_graph(use_llm=use_llm)
 
         logger.info(
             f"ParallelAgentExecutor initialized: "
@@ -171,10 +176,7 @@ class ParallelAgentExecutor:
             self.circuit_breaker.reset_cycle()
 
         # Create coroutines for all agents
-        tasks = [
-            self._execute_agent(agent, sim_date, store_id)
-            for agent in agents
-        ]
+        tasks = [self._execute_agent(agent, sim_date, store_id) for agent in agents]
 
         # Run all agents concurrently, collect results (including exceptions)
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -192,11 +194,13 @@ class ParallelAgentExecutor:
 
             if isinstance(result, Exception):
                 # Agent execution failed with exception
-                agent_results.append(AgentResult(
-                    agent_id=agent_id,
-                    success=False,
-                    error=str(result)[:500],
-                ))
+                agent_results.append(
+                    AgentResult(
+                        agent_id=agent_id,
+                        success=False,
+                        error=str(result)[:500],
+                    )
+                )
                 errors += 1
                 logger.error(f"Agent {agent_id} failed with exception: {result}")
 
@@ -223,12 +227,13 @@ class ParallelAgentExecutor:
                     errors += 1
                     if self.circuit_breaker and result.error:
                         self.circuit_breaker.record_failure(
-                            agent_id,
-                            Exception(result.error)
+                            agent_id, Exception(result.error)
                         )
             else:
                 # Unexpected result type
-                logger.warning(f"Agent {agent_id} returned unexpected result type: {type(result)}")
+                logger.warning(
+                    f"Agent {agent_id} returned unexpected result type: {type(result)}"
+                )
                 errors += 1
 
         duration = time.time() - start_time
@@ -310,6 +315,7 @@ class ParallelAgentExecutor:
 
             # Detailed error logging
             import traceback
+
             error_details = f"{e}\n{traceback.format_exc()}"
             logger.error(f"Agent {agent_id} execution failed: {error_details}")
 
@@ -461,5 +467,7 @@ class WarmupController:
             "active_agents": self.get_active_agent_count(),
             "total_agents": self.total_agents,
             "is_complete": self.is_warmup_complete(),
-            "progress_percent": min(100, int(self.current_cycle / self.warmup_cycles * 100)),
+            "progress_percent": min(
+                100, int(self.current_cycle / self.warmup_cycles * 100)
+            ),
         }

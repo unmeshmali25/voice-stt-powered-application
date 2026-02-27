@@ -134,9 +134,9 @@ def create_initial_state(
         # Tracking
         events_created=0,
         errors=[],
-        # LLM Decision Configuration (defaults to probability-based)
-        use_llm_decisions=False,
-        llm_tier=None,
+        # LLM Decision Configuration (from agent assignment)
+        use_llm_decisions=agent.get("use_llm_decisions", False),
+        llm_tier=agent.get("llm_tier"),
         # Historical Context
         recent_orders=[],
         monthly_spend=0.0,

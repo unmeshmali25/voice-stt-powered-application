@@ -343,6 +343,7 @@ class SimulationOrchestrator:
                 max_workers=12,
                 pool_size=50,
                 max_overflow=75,
+                use_llm=self.use_llm_graph,
             )
             logger.info("Parallel executor initialized")
 
