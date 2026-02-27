@@ -43,6 +43,7 @@ from app.simulation.agent.llm_decisions import (
     reset_decision_engine,
 )
 from app.simulation.metrics.llm_metrics import get_metrics_collector
+from app.simulation.metrics.dashboard import create_llm_dashboard, MetricsDashboard
 from app.simulation.agent.decision_tracker import get_decision_tracker
 from app.simulation.config import SimulationConfig
 
@@ -979,71 +980,94 @@ class SimulationOrchestrator:
 
     def _build_simple_dashboard(self) -> Panel:
         """Build simple dashboard without debug logs."""
-        table = Table(title="Simulation Statistics", show_header=True)
-        table.add_column("Metric", style="cyan", width=20)
-        table.add_column("Value", style="green", justify="right", width=20)
+        # Create layout to hold simulation stats and LLM metrics side by side
+        main_layout = Layout()
+
+        # Build simulation statistics table
+        sim_table = Table(title="Simulation Statistics", show_header=True, box=None)
+        sim_table.add_column("Metric", style="cyan", width=20)
+        sim_table.add_column("Value", style="green", justify="right", width=18)
 
         elapsed = self.stats.elapsed_hours()
-        table.add_row("Elapsed Time", f"{elapsed:.2f}h")
-        sim_time_str = (
+        sim_table.add_row("Elapsed Time", f"{elapsed:.2f}h")
+        sim_table.add_row(
+            "Simulated Time",
             self.stats.simulated_datetime.strftime("%Y-%m-%d %H:%M:%S")
             if self.stats.simulated_datetime
-            else "N/A"
+            else "N/A",
         )
-        table.add_row("Simulated Time", sim_time_str)
-        table.add_row("Cycles", str(self.stats.cycles_completed))
+        sim_table.add_row("Cycles", str(self.stats.cycles_completed))
 
-        # Mode indicator
+        # Mode indicator with LLM percentage
         mode = "Parallel" if self.parallel_mode else "Sequential"
-        table.add_row("Mode", mode)
+        if self.llm_percentage > 0:
+            mode += f" | LLM: {self.llm_percentage * 100:.0f}%"
+        sim_table.add_row("Mode", mode)
 
-        table.add_row("─" * 18, "─" * 13)
-        table.add_row("Agents Processed", str(self.stats.agents_processed))
-        table.add_row("Agents Shopped", str(self.stats.agents_shopped))
-        table.add_row("Sessions Created", str(self.stats.sessions_created))
-        table.add_row("─" * 18, "─" * 13)
-        table.add_row("Checkouts", str(self.stats.checkouts_completed))
-        table.add_row("Abandoned", str(self.stats.checkouts_abandoned))
-        table.add_row("Events Created", str(self.stats.events_created))
-        table.add_row("Offers Assigned", str(self.stats.offers_assigned))
-        table.add_row("─" * 18, "─" * 13)
+        sim_table.add_row("─" * 18, "─" * 13)
+        sim_table.add_row("Agents Processed", str(self.stats.agents_processed))
+        sim_table.add_row("Agents Shopped", str(self.stats.agents_shopped))
+        sim_table.add_row("Sessions Created", str(self.stats.sessions_created))
+        sim_table.add_row("─" * 18, "─" * 13)
+        sim_table.add_row("Checkouts", str(self.stats.checkouts_completed))
+        sim_table.add_row("Abandoned", str(self.stats.checkouts_abandoned))
+        sim_table.add_row("Events Created", str(self.stats.events_created))
+        sim_table.add_row("Offers Assigned", str(self.stats.offers_assigned))
+        sim_table.add_row("─" * 18, "─" * 13)
 
         # Memory usage
         mem_stats = self.memory_monitor.get_stats()
         if mem_stats.get("available"):
             mem_style = "green" if mem_stats.get("is_safe", True) else "red"
-            table.add_row("Memory (MB)", f"{mem_stats['rss_mb']:.0f}", style=mem_style)
+            sim_table.add_row(
+                "Memory (MB)", f"{mem_stats['rss_mb']:.0f}", style=mem_style
+            )
 
         # Latency stats
         latency = self.latency_tracker.get_aggregate()
         if latency.count > 0:
-            table.add_row("Latency p50/p95", f"{latency.p50:.0f}/{latency.p95:.0f}ms")
+            sim_table.add_row(
+                "Latency p50/p95", f"{latency.p50:.0f}/{latency.p95:.0f}ms"
+            )
 
         # Rate limiter stats
         rate_metrics = get_rate_limiter_metrics()
         if rate_metrics.get("railway_api"):
             rm = rate_metrics["railway_api"]
-            table.add_row("Rate Limit", f"{rm['refill_rate']:.0f} req/s")
-            table.add_row("Requests Made", str(rm["total_acquired"]))
+            sim_table.add_row("Rate Limit", f"{rm['refill_rate']:.0f} req/s")
+            sim_table.add_row("Requests Made", str(rm["total_acquired"]))
 
         # Circuit breaker
         if self.circuit_breaker:
             cb_status = self.circuit_breaker.get_status()
             if cb_status["state"] == "open":
-                table.add_row(
+                sim_table.add_row(
                     "Circuit Breaker", "[red bold]OPEN[/red bold]", style="red"
                 )
             else:
-                table.add_row("Circuit Breaker", "Closed", style="green")
+                sim_table.add_row("Circuit Breaker", "Closed", style="green")
 
-        table.add_row("─" * 18, "─" * 13)
-        table.add_row(
+        # Add LLM-specific metrics if enabled
+        if self.llm_percentage > 0 and self.metrics_collector:
+            sim_table.add_row("─" * 18, "─" * 13)
+            llm_summary = self.metrics_collector.get_decision_summary()
+            cache_summary = self.metrics_collector.get_cache_summary()
+
+            llm_count = llm_summary.get("llm_decisions", 0)
+            prob_count = llm_summary.get("probability_decisions", 0)
+            hit_rate = cache_summary.get("hit_rate_percent", "0%")
+
+            sim_table.add_row("Decisions (LLM/Prob)", f"{llm_count}/{prob_count}")
+            sim_table.add_row("Cache Hit Rate", hit_rate)
+
+        sim_table.add_row("─" * 18, "─" * 13)
+        sim_table.add_row(
             "Errors",
             str(self.stats.errors),
             style="red" if self.stats.errors > 0 else "green",
         )
         if self.stats.last_error:
-            table.add_row("Last Error", self.stats.last_error[:40], style="red")
+            sim_table.add_row("Last Error", self.stats.last_error[:40], style="red")
 
         title = "[bold blue]VoiceOffers Simulation[/bold blue]"
         if self._paused:
@@ -1052,7 +1076,7 @@ class SimulationOrchestrator:
         subtitle = f"Time Scale: {self.time_scale}x | LangSmith: {'ON' if os.getenv('LANGCHAIN_TRACING_V2') else 'OFF'}"
 
         return Panel(
-            table,
+            sim_table,
             title=title,
             subtitle=subtitle,
             border_style="blue" if not self._paused else "red",
