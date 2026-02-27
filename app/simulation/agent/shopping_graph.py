@@ -596,13 +596,13 @@ def build_shopping_graph(use_llm: bool = False) -> StateGraph:
     return workflow.compile()
 
 
-# Pre-compiled graph for reuse
-_compiled_graph = None
+# Pre-compiled graphs for reuse (separate caches for LLM and non-LLM versions)
+_compiled_graphs: dict[bool, StateGraph] = {}
 
 
 def get_shopping_graph(use_llm: bool = False) -> StateGraph:
     """
-    Get the compiled shopping graph (singleton).
+    Get the compiled shopping graph (cached per use_llm flag).
 
     Args:
         use_llm: If True, use LLM decision routers; if False, use probability-based nodes
@@ -610,7 +610,7 @@ def get_shopping_graph(use_llm: bool = False) -> StateGraph:
     Returns:
         Compiled StateGraph
     """
-    global _compiled_graph
-    if _compiled_graph is None:
-        _compiled_graph = build_shopping_graph(use_llm=use_llm)
-    return _compiled_graph
+    global _compiled_graphs
+    if use_llm not in _compiled_graphs:
+        _compiled_graphs[use_llm] = build_shopping_graph(use_llm=use_llm)
+    return _compiled_graphs[use_llm]
