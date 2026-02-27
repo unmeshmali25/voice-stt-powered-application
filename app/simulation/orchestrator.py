@@ -44,6 +44,10 @@ from app.simulation.agent.llm_decisions import (
 )
 from app.simulation.metrics.llm_metrics import get_metrics_collector
 from app.simulation.metrics.dashboard import create_llm_dashboard, MetricsDashboard
+from app.simulation.metrics.cache_reporter import (
+    get_cache_reporter,
+    CacheEffectivenessReporter,
+)
 from app.simulation.agent.decision_tracker import get_decision_tracker
 from app.simulation.config import SimulationConfig
 
@@ -942,6 +946,8 @@ class SimulationOrchestrator:
                 "rate_limit_rps": self.rate_limit_rps,
                 "checkpoint_interval": self.checkpoint_interval,
                 "mode": "parallel" if self.parallel_mode else "sequential",
+                "llm_percentage": self.llm_percentage,
+                "llm_tier_split": self.llm_tier_split,
             }
 
             performance = {}
@@ -966,10 +972,37 @@ class SimulationOrchestrator:
                 checkpoint_path=checkpoint_path,
                 performance=performance,
             )
+
+            # Generate and save cache effectiveness report if LLM was used
+            if self.llm_percentage > 0 and self.metrics_collector:
+                self._generate_cache_report(run_dir)
+
             return run_dir
         except Exception as e:
             logger.warning(f"Failed to record run: {e}")
             return None
+
+    def _generate_cache_report(self, run_dir: Path) -> None:
+        """Generate and save cache effectiveness report."""
+        try:
+            reporter = get_cache_reporter()
+
+            # Generate report from metrics collector
+            report = reporter.generate_report(
+                metrics_collector=self.metrics_collector,
+                simulation_id=run_dir.name,
+            )
+
+            # Save as both JSON and Markdown
+            reporter.export_report(report, format="both", output_dir=str(run_dir))
+
+            # Print summary to console
+            summary = reporter.generate_summary_string(report)
+            self.console.print(summary)
+
+            logger.info(f"Cache report saved to {run_dir}")
+        except Exception as e:
+            logger.warning(f"Failed to generate cache report: {e}")
 
     def _build_dashboard(self) -> Panel:
         """Build Rich dashboard panel."""
