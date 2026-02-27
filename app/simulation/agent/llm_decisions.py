@@ -214,6 +214,7 @@ class LLMDecisionEngine:
                 prompt_tokens=usage_info.get("prompt_tokens", 0),
                 completion_tokens=usage_info.get("completion_tokens", 0),
                 cache_hit=False,
+                simulated_timestamp=state.get("simulated_timestamp"),
             )
 
             return DecisionResult(
@@ -347,6 +348,7 @@ class LLMDecisionEngine:
                 prompt_tokens=usage_info.get("prompt_tokens", 0),
                 completion_tokens=usage_info.get("completion_tokens", 0),
                 cache_hit=False,
+                simulated_timestamp=state.get("simulated_timestamp"),
             )
 
             return DecisionResult(

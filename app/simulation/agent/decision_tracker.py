@@ -60,7 +60,8 @@ class DecisionRecord:
     cache_hit: bool = False
     context_hash: str = ""
 
-    # Timestamp
+    # Timestamps
+    simulated_timestamp: Optional[datetime] = None
     created_at: Optional[datetime] = None
 
     def __post_init__(self):
@@ -75,19 +76,24 @@ class DecisionRecord:
             "decision_type": self.decision_type,
             "llm_tier": self.llm_tier,
             "llm_provider": self.llm_provider,
-            "llm_model": self.llm_model,
-            "context": self.context,
-            "prompt": self.prompt,
-            "response": self.response,
+            "model_name": self.llm_model,
+            "decision_context": self.context,
+            "prompt_text": self.prompt,
+            "raw_llm_response": self.response,
             "decision": self.decision,
             "confidence": self.confidence,
             "reasoning": self.reasoning,
             "urgency": self.urgency,
             "latency_ms": self.latency_ms,
-            "prompt_tokens": self.prompt_tokens,
-            "completion_tokens": self.completion_tokens,
+            "tokens_input": self.prompt_tokens,
+            "tokens_output": self.completion_tokens,
             "cache_hit": self.cache_hit,
             "context_hash": self.context_hash,
+            "simulated_timestamp": self.simulated_timestamp.isoformat()
+            if self.simulated_timestamp
+            else self.created_at.isoformat()
+            if self.created_at
+            else None,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 
@@ -146,7 +152,7 @@ class DecisionTracker:
 
         # Queue for batching
         self._queue: List[DecisionRecord] = []
-        self._queue_lock = asyncio.Lock()
+        self._queue_lock: Optional[asyncio.Lock] = None
 
         # Statistics
         self._stats = {
@@ -177,6 +183,8 @@ class DecisionTracker:
 
     async def start(self) -> None:
         """Start the auto-flush background task."""
+        # Initialize lock in the correct event loop context
+        self._queue_lock = asyncio.Lock()
         self._running = True
         self._flush_task = asyncio.create_task(self._auto_flush())
         logger.info("Decision tracker started")
@@ -208,6 +216,11 @@ class DecisionTracker:
                 logger.error(f"Error in auto-flush: {e}")
 
     @traceable(run_type="llm")
+    def _ensure_lock(self) -> None:
+        """Ensure the queue lock is initialized in the current event loop."""
+        if self._queue_lock is None:
+            self._queue_lock = asyncio.Lock()
+
     async def log_decision(
         self,
         agent_id: str,
@@ -227,6 +240,7 @@ class DecisionTracker:
         completion_tokens: int = 0,
         cache_hit: bool = False,
         context_hash: str = "",
+        simulated_timestamp: Optional[datetime] = None,
     ) -> None:
         """
         Log an LLM decision with full audit trail.
@@ -249,6 +263,7 @@ class DecisionTracker:
             completion_tokens: Number of completion tokens
             cache_hit: Whether result was from cache
             context_hash: Hash of context for cache tracking
+            simulated_timestamp: Simulated timestamp for the decision
         """
         record = DecisionRecord(
             agent_id=agent_id,
@@ -269,8 +284,10 @@ class DecisionTracker:
             completion_tokens=completion_tokens,
             cache_hit=cache_hit,
             context_hash=context_hash,
+            simulated_timestamp=simulated_timestamp,
         )
 
+        self._ensure_lock()
         async with self._queue_lock:
             self._queue.append(record)
             self._update_stats(record)
@@ -293,12 +310,14 @@ class DecisionTracker:
             decision_type: Type of decision
             context_hash: Hash of the cached context
         """
+        self._ensure_lock()
         async with self._queue_lock:
             self._stats["cache_hits"] += 1
             self._stats["by_agent"][agent_id]["cache_hits"] += 1
 
     async def log_cache_miss(self) -> None:
         """Log a cache miss (LLM call required)."""
+        self._ensure_lock()
         async with self._queue_lock:
             self._stats["cache_misses"] += 1
 
@@ -336,6 +355,7 @@ class DecisionTracker:
         Returns:
             Number of records flushed
         """
+        self._ensure_lock()
         async with self._queue_lock:
             return await self._flush_unlocked()
 

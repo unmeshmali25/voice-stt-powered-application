@@ -215,6 +215,9 @@ class SimulationOrchestrator:
             # Reset to ensure fresh instance
             reset_decision_engine()
             self.llm_engine = get_decision_engine(SimulationConfig())
+            # Start decision tracker for auto-flush
+            if self.decision_tracker:
+                asyncio.create_task(self.decision_tracker.start())
 
         # Store db_url for parallel executor
         self._db_url = db_url or os.getenv("DATABASE_URL", "")
@@ -363,6 +366,13 @@ class SimulationOrchestrator:
         """Request immediate stop of simulation."""
         self._stop_requested = True
         logger.info("Stop requested, aborting current operation...")
+
+        # Flush any pending decisions to database
+        if self.decision_tracker:
+            try:
+                asyncio.create_task(self.decision_tracker.flush())
+            except Exception as e:
+                logger.warning(f"Failed to flush decisions on stop: {e}")
 
         # Also stop the parallel executor to cancel pending tasks
         if hasattr(self, "parallel_executor") and self.parallel_executor:
@@ -584,6 +594,10 @@ class SimulationOrchestrator:
             finally:
                 self._cleanup_signal_handlers()
 
+        # Cleanup: Stop decision tracker to flush remaining decisions
+        if self.decision_tracker:
+            await self.decision_tracker.stop()
+
         logger.info(f"Simulation complete. Stats: {self.stats.to_dict()}")
 
         run_dir = self._record_run()
@@ -707,7 +721,9 @@ class SimulationOrchestrator:
         # Each cycle sleeps for 3600/time_scale seconds, which naturally advances
         # simulated time by 1 hour when now() multiplies elapsed time by time_scale.
         # We pass hours=0 to avoid double-counting (advance_time + wall clock).
-        advance_result = self.scheduler.advance_simulation_time(
+        # Run in thread to avoid blocking the async event loop
+        advance_result = await asyncio.to_thread(
+            self.scheduler.advance_simulation_time,
             hours=0,  # No manual time advancement - wall clock handles it
             agent_ids=self.agent_ids,
             process_all_agents=self.process_all_agents,
