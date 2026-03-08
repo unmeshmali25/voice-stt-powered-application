@@ -91,7 +91,6 @@ class ParallelAgentExecutor:
         max_workers: int = 12,
         pool_size: int = 50,
         max_overflow: int = 75,
-        use_llm: bool = False,
     ):
         """
         Initialize parallel executor.
@@ -104,7 +103,6 @@ class ParallelAgentExecutor:
             max_workers: Thread pool size for LangGraph execution
             pool_size: Base database connection pool size
             max_overflow: Max additional connections under load
-            use_llm: If True, use LLM decision routers; if False, use probability-based
         """
         self.db_url = db_url
         self.rate_limiter = rate_limiter
@@ -127,8 +125,8 @@ class ParallelAgentExecutor:
         # Thread pool for synchronous LangGraph calls
         self.thread_pool = ThreadPoolExecutor(max_workers=max_workers)
 
-        # Pre-compiled graph (shared, stateless)
-        self.shopping_graph = get_shopping_graph(use_llm=use_llm)
+        # Pre-compiled graph (shared, stateless) - Sprint 4: simplified, probability-based
+        self.shopping_graph = get_shopping_graph()
 
         # Stop flag for graceful cancellation
         self._stop_requested = False

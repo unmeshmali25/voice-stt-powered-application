@@ -110,81 +110,6 @@ def decide_shop_node(state: AgentState) -> dict:
     return {"should_shop": should_shop}
 
 
-@traceable(name="decide_shop_router_async")
-async def decide_shop_router_async(state: AgentState) -> dict:
-    """
-    Async router node that decides whether to use LLM or probability for shop decision.
-
-    Checks state["use_llm_decisions"] flag:
-    - If True: Use LLM decision engine
-    - If False: Use probability-based logic
-
-    Always includes decision_source in state for tracking.
-    """
-    agent_id = state.get("agent_id", "unknown")
-    use_llm = state.get("use_llm_decisions", False)
-
-    if use_llm:
-        try:
-            # Get LLM engine and make decision
-            llm_tier = (
-                state.get("llm_tier") or "fast"
-            )  # fast (Ollama) or standard (OpenRouter)
-            engine = get_decision_engine(_get_simulation_config())
-
-            result = await engine.decide_shop(state, tier=llm_tier)
-
-            logger.debug(
-                f"Agent {agent_id}: LLM shop decision = {result.decision} "
-                f"(confidence={result.confidence:.2f}, provider={result.llm_provider}, "
-                f"latency={result.latency_ms}ms, cache_hit={result.cache_hit})"
-            )
-
-            return {
-                "should_shop": result.decision,
-                "decision_source": "cache" if result.cache_hit else "llm",
-                "decision_confidence": result.confidence,
-                "decision_reasoning": result.reasoning,
-                "llm_provider": result.llm_provider,
-                "llm_response_time_ms": result.latency_ms,
-            }
-
-        except Exception as e:
-            logger.warning(
-                f"Agent {agent_id}: LLM shop decision failed, falling back to probability: {e}"
-            )
-            # Fallback to probability
-            prob_result = decide_shop_node(state)
-            prob_result["decision_source"] = "probability_fallback"
-            prob_result["llm_fallback_reason"] = str(e)
-            return prob_result
-    else:
-        # Use probability-based decision
-        result = decide_shop_node(state)
-        result["decision_source"] = "probability"
-        return result
-
-
-@traceable(name="decide_shop_router")
-def decide_shop_router(state: AgentState) -> dict:
-    """
-    Synchronous wrapper for decide_shop_router_async.
-
-    Runs the async router in a new event loop for sync graph execution.
-    """
-    try:
-        loop = asyncio.get_running_loop()
-        # If we're already in an event loop, create a new one in a thread
-        import concurrent.futures
-
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future = executor.submit(asyncio.run, decide_shop_router_async(state))
-            return future.result()
-    except RuntimeError:
-        # No event loop running, we can use asyncio.run directly
-        return asyncio.run(decide_shop_router_async(state))
-
-
 @traceable(name="browse_products")
 def browse_products_node(state: AgentState) -> dict:
     """
@@ -488,24 +413,9 @@ async def decide_checkout_router_async(state: AgentState) -> dict:
         return result
 
 
-@traceable(name="decide_checkout_router")
-def decide_checkout_router(state: AgentState) -> dict:
-    """
-    Synchronous wrapper for decide_checkout_router_async.
-
-    Runs the async router in a new event loop for sync graph execution.
-    """
-    try:
-        loop = asyncio.get_running_loop()
-        # If we're already in an event loop, create a new one in a thread
-        import concurrent.futures
-
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future = executor.submit(asyncio.run, decide_checkout_router_async(state))
-            return future.result()
-    except RuntimeError:
-        # No event loop running, we can use asyncio.run directly
-        return asyncio.run(decide_checkout_router_async(state))
+# NOTE: LLM router functions (decide_shop_router, decide_checkout_router) removed in Sprint 4
+# They are preserved in llm_decisions.py for future GPU/free API reactivation
+# Current graph uses direct probability nodes for zero-cost operation
 
 
 @traceable(name="complete_checkout")
@@ -575,24 +485,23 @@ def checkout_router(state: AgentState) -> Literal["complete", "abandon"]:
 # =============================================================================
 
 
-def build_shopping_graph(use_llm: bool = False) -> StateGraph:
+def build_shopping_graph() -> StateGraph:
     """
-    Build the shopping workflow StateGraph.
+    Build the shopping workflow StateGraph with probability-based decisions.
 
-    Graph structure:
+    Graph structure (Sprint 4 - Simplified, no LLM routers):
     ```
-    [START] -> [decide_shop] -> (shop?) -> [browse_products]
-                               (skip) -> [END]
+    [START] -> [decide_shop_node] -> (shop?) -> [browse_products]
+                                    (skip) -> [END]
 
-    [browse_products] -> [add_to_cart] -> [view_coupons] -> [decide_checkout]
+    [browse_products] -> [add_to_cart] -> [view_coupons] -> [decide_checkout_node]
 
-    [decide_checkout] -> (complete?) -> [complete_checkout] -> [END]
-                        (abandon) -> [abandon_session] -> [END]
+    [decide_checkout_node] -> (complete?) -> [complete_checkout] -> [END]
+                             (abandon) -> [abandon_session] -> [END]
     ```
 
-    Args:
-        use_llm: If True, use LLM decision routers (decide_shop_router, decide_checkout_router)
-                If False, use original probability-based nodes (backward compatible)
+    Note: LLM decision routers removed in Sprint 4 for zero-cost operation.
+    LLM code preserved in llm_decisions.py for future GPU/free API reactivation.
 
     Returns:
         Compiled StateGraph ready for execution
@@ -600,18 +509,12 @@ def build_shopping_graph(use_llm: bool = False) -> StateGraph:
     # Create graph with AgentState schema
     workflow = StateGraph(AgentState)
 
-    # Choose decision nodes based on use_llm flag
-    # Note: The actual LLM vs probability routing happens at runtime based on agent state
-    # This parameter is mainly for backward compatibility and testing
-    shop_node = decide_shop_router if use_llm else decide_shop_node
-    checkout_node = decide_checkout_router if use_llm else decide_checkout_node
-
-    # Add nodes
-    workflow.add_node("decide_shop", shop_node)
+    # Add nodes (direct probability nodes - no LLM routers)
+    workflow.add_node("decide_shop", decide_shop_node)
     workflow.add_node("browse_products", browse_products_node)
     workflow.add_node("add_to_cart", add_to_cart_node)
     workflow.add_node("view_coupons", view_coupons_node)
-    workflow.add_node("decide_checkout", checkout_node)
+    workflow.add_node("decide_checkout", decide_checkout_node)
     workflow.add_node("complete_checkout", complete_checkout_node)
     workflow.add_node("abandon_session", abandon_session_node)
 
@@ -637,21 +540,21 @@ def build_shopping_graph(use_llm: bool = False) -> StateGraph:
     return workflow.compile()
 
 
-# Pre-compiled graphs for reuse (separate caches for LLM and non-LLM versions)
-_compiled_graphs: dict[bool, StateGraph] = {}
+# Pre-compiled graph for reuse (Sprint 4: simplified, no LLM)
+_compiled_graph: StateGraph | None = None
 
 
-def get_shopping_graph(use_llm: bool = False) -> StateGraph:
+def get_shopping_graph() -> StateGraph:
     """
-    Get the compiled shopping graph (cached per use_llm flag).
+    Get the compiled shopping graph with probability-based decisions.
 
-    Args:
-        use_llm: If True, use LLM decision routers; if False, use probability-based nodes
+    Sprint 4: Simplified graph without LLM routers for zero-cost operation.
+    LLM code preserved in llm_decisions.py for future reactivation.
 
     Returns:
-        Compiled StateGraph
+        Compiled StateGraph with direct probability nodes
     """
-    global _compiled_graphs
-    if use_llm not in _compiled_graphs:
-        _compiled_graphs[use_llm] = build_shopping_graph(use_llm=use_llm)
-    return _compiled_graphs[use_llm]
+    global _compiled_graph
+    if _compiled_graph is None:
+        _compiled_graph = build_shopping_graph()
+    return _compiled_graph

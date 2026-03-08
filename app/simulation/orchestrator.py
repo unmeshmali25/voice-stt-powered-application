@@ -153,9 +153,9 @@ class SimulationOrchestrator:
         parallel_mode: bool = True,
         db_url: Optional[str] = None,
         # LLM parameters
-        llm_percentage: float = 0.4,
+        llm_percentage: float = 0.0,  # Disabled by default for zero-cost operation
         llm_tier_split: float = 0.5,
-        use_llm_graph: bool = True,
+        use_llm_graph: bool = False,  # Disabled by default (no router overhead)
     ):
         """
         Initialize orchestrator.
@@ -172,9 +172,9 @@ class SimulationOrchestrator:
             warmup_cycles: Number of cycles to gradually ramp up agents (0 to disable)
             parallel_mode: Enable parallel agent execution (vs sequential)
             db_url: Database URL for parallel executor (uses env if None)
-            llm_percentage: Percentage of agents using LLM decisions (0.0 to 1.0)
-            llm_tier_split: Split between standard (OpenRouter) and fast (Ollama) tiers (0.0 to 1.0)
-            use_llm_graph: If True, use LLM-enabled graph with router nodes
+            llm_percentage: Percentage of agents using LLM decisions (0.0 to 1.0). Default 0.0 (disabled).
+            llm_tier_split: Split between standard (OpenRouter) and fast (Ollama) tiers (0.0 to 1.0). Ignored if llm_percentage=0.
+            use_llm_graph: If True, use LLM-enabled graph with router nodes. Default False (direct probability nodes).
         """
         self.db = db
         self.time_scale = time_scale
@@ -186,19 +186,15 @@ class SimulationOrchestrator:
         self.checkpoint_interval = checkpoint_interval
         self.warmup_cycles = warmup_cycles
 
-        # Validate and store LLM parameters
+        # Validate and store LLM parameters (disabled by default for zero-cost operation)
         if not 0.0 <= llm_percentage <= 1.0:
             raise ValueError(
                 f"llm_percentage must be between 0.0 and 1.0, got {llm_percentage}"
             )
-        if not 0.0 <= llm_tier_split <= 1.0:
-            raise ValueError(
-                f"llm_tier_split must be between 0.0 and 1.0, got {llm_tier_split}"
-            )
 
         self.llm_percentage = llm_percentage
-        self.llm_tier_split = llm_tier_split
-        self.use_llm_graph = use_llm_graph
+        self.llm_tier_split = llm_tier_split if llm_percentage > 0 else 0.0
+        self.use_llm_graph = use_llm_graph if llm_percentage > 0 else False
 
         # Initialize LLM infrastructure if using LLM
         self.llm_engine = None
@@ -251,8 +247,8 @@ class SimulationOrchestrator:
         # Initialize actions (for sequential mode)
         set_actions(db)
 
-        # Get shopping graph (with LLM support if enabled)
-        self.shopping_graph = get_shopping_graph(use_llm=self.use_llm_graph)
+        # Get shopping graph (Sprint 4: simplified, probability-based only)
+        self.shopping_graph = get_shopping_graph()
 
         # Stats
         self.stats = SimulationStats()
@@ -347,7 +343,6 @@ class SimulationOrchestrator:
                 max_workers=12,
                 pool_size=50,
                 max_overflow=75,
-                use_llm=self.use_llm_graph,
             )
             logger.info("Parallel executor initialized")
 
@@ -1236,7 +1231,7 @@ async def run_simulation(
     resume: bool = False,
     resume_from: Optional[str] = None,
     # LLM parameters
-    llm_percentage: float = 0.4,
+    llm_percentage: float = 0.0,  # Disabled by default for zero-cost operation
     llm_tier_split: float = 0.5,
 ) -> SimulationStats:
     """
@@ -1482,8 +1477,8 @@ Examples:
     parser.add_argument(
         "--llm-percentage",
         type=float,
-        default=0.4,
-        help="Percentage of agents using LLM decisions (0.0 to 1.0, default: 0.4 = 40%%)",
+        default=0.0,
+        help="Percentage of agents using LLM decisions (0.0 to 1.0, default: 0.0 = disabled)",
     )
     parser.add_argument(
         "--llm-tier-split",

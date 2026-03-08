@@ -60,9 +60,9 @@ class AgentState(TypedDict, total=False):
     events_created: int
     errors: List[str]
 
-    # --- LLM Decision Configuration ---
-    use_llm_decisions: bool  # Whether to use LLM or probability-based decisions
-    llm_tier: Optional[str]  # 'standard' (OpenRouter) or 'fast' (Ollama)
+    # --- LLM Decision Configuration (Sprint 4: Disabled for zero-cost operation) ---
+    # use_llm_decisions: bool  # REMOVED - now always uses probability
+    # llm_tier: Optional[str]   # REMOVED - no LLM tier selection needed
 
     # --- Historical Context for LLM Decisions ---
     recent_orders: List[dict]  # Last 5 purchases for context
@@ -134,9 +134,6 @@ def create_initial_state(
         # Tracking
         events_created=0,
         errors=[],
-        # LLM Decision Configuration (from agent assignment)
-        use_llm_decisions=agent.get("use_llm_decisions", False),
-        llm_tier=agent.get("llm_tier"),
         # Historical Context
         recent_orders=[],
         monthly_spend=0.0,
