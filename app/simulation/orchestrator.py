@@ -521,6 +521,44 @@ class SimulationOrchestrator:
             should_initialize = (
                 True  # Track if this is a fresh start (for initialization)
             )
+
+            # Clear stale simulation data from previous runs
+            logger.info("Clearing stale simulation data from previous runs...")
+            try:
+                # Expire all simulation offers
+                result = self.db.execute(
+                    text("""
+                    UPDATE user_coupons
+                    SET status = 'expired'
+                    WHERE is_simulation = true AND status = 'active'
+                """)
+                )
+                expired_count = result.rowcount
+
+                # Clear simulation cycles
+                result = self.db.execute(
+                    text("""
+                    DELETE FROM offer_cycles WHERE is_simulation = true
+                """)
+                )
+                cycles_cleared = result.rowcount
+
+                # Clear user cycle states (critical for offer assignment)
+                result = self.db.execute(
+                    text("""
+                    DELETE FROM user_offer_cycles WHERE is_simulation = true
+                """)
+                )
+                cycles_deleted = result.rowcount
+
+                self.db.commit()
+                logger.info(
+                    f"Cleared simulation data: {expired_count} offers expired, "
+                    f"{cycles_cleared} cycles removed, {cycles_deleted} user cycle records deleted"
+                )
+            except Exception as e:
+                logger.error(f"Failed to clear simulation data: {e}")
+                self.db.rollback()
         else:
             logger.warning(
                 "Simulation already active, skipping start_simulation() call"
