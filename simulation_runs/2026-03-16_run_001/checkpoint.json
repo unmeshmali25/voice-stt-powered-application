@@ -1,0 +1,28 @@
+{
+  "version": "1.0",
+  "created_at": "2026-03-15T18:52:01.148559",
+  "simulation_config": {
+    "time_scale": 160.0,
+    "default_store_id": "ebb4d8a1-4695-46f0-844b-7f41ed13bd59",
+    "process_all_agents": false,
+    "rate_limit_rps": 50.0,
+    "checkpoint_interval": 10
+  },
+  "simulation_state": {
+    "current_cycle": 340,
+    "simulated_datetime": "2025-07-16T21:22:12.411520"
+  },
+  "statistics": {
+    "elapsed_hours": 3.43,
+    "simulated_datetime": "2025-07-16 21:22:12.411520",
+    "cycles_completed": 340,
+    "agents_processed": 126140,
+    "agents_shopped": 1003,
+    "sessions_created": 1003,
+    "checkouts_completed": 581,
+    "checkouts_abandoned": 422,
+    "offers_assigned": 41344,
+    "events_created": 6743,
+    "errors": 0
+  }
+}
